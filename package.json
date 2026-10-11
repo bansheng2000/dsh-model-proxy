@@ -1,0 +1,94 @@
+{
+  "name": "dsh-model-proxy",
+  "version": "0.2.0",
+  "description": "在 DSH 设置里按域名指定哪些流量走本地 HTTP 代理（NekoBox 等），未指定的直连。可填代理地址、域名清单与绕过清单。",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/index.js",
+    "lib/policy.js",
+    "lib/providers.js",
+    "lib/dispatcher.js",
+    "lib/bridge.js",
+    "lib/client.js",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "proxy",
+    "nekobox",
+    "http-proxy",
+    "llm",
+    "clash",
+    "翻墙"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.4",
+    "undici": "^7.16.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-client-locale": "^0.1.7-rc.1 || ^0.2.0-rc.1",
+    "@deepseek-ai/dsh-client-ui-plugin-manager": "^0.1.7-rc.1 || ^0.2.0-rc.1",
+    "@deepseek-ai/dsh-client-ui-settings": "^0.1.7-rc.1 || ^0.2.0-rc.1",
+    "@deepseek-ai/dsh-settings": "^0.1.7-rc.1 || ^0.2.0-rc.1",
+    "@deepseek-ai/schemastery": "^3.18.4",
+    "react": "^18.2.0"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-client-locale": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-client-ui-plugin-manager": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-client-ui-settings": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-settings": {
+      "optional": true
+    },
+    "@deepseek-ai/schemastery": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    }
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-plugin-manager"
+      ],
+      "platform": "web"
+    },
+    "engines": {
+      "dsh": ">=0.1.7-rc.1"
+    },
+    "compatibility": {
+      "dshReleases": {
+        "0.1.7-rc.1": "compatible"
+      }
+    }
+  }
+}

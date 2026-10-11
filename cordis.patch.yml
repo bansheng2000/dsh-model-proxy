@@ -1,0 +1,34 @@
+# dsh-model-proxy - by domain name routing to a local proxy
+#
+# Registers one entry `model-proxy`. The plugin ships its own settings card
+# (sidebar Plugins -> Installed -> model-proxy -> row config), where you set
+# the local proxy URL and the list of domains that should go through it.
+#
+# disabled + mode=off by default - installing it changes no outbound behaviour.
+#
+# config written here is the lowest-priority default (the settings card overrides it):
+#   rules:
+#     enabled: true
+#     mode: allowlist          # off | allowlist (whitelist) | everything (all)
+#     proxyUrl: http://127.0.0.1:2080
+#     selected:                # domains to proxy, one host pattern per entry
+#       - api.example.com
+#       - .example.com
+#       - "*.example.com:443"
+#     bypass:                  # always direct, takes precedence over selected
+#       - localhost
+#
+# Do not hardcode a route to a specific provider here: a patch replaces the whole
+# config row, and after the plugin is disabled that dead config would linger
+# (lesson from dsh-free-search issue #51).
+- insert:
+    - id: model-proxy
+      name: dsh-model-proxy
+      config:
+        rules:
+          enabled: false
+          mode: "off"
+          proxyUrl: "http://127.0.0.1:2080"
+          selected: []
+          bypass:
+            - localhost
