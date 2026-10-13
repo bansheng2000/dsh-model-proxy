@@ -92,7 +92,9 @@ node "$dsh\node\bin\node.exe" "$dsh\pnpm\bin\pnpm.cjs" install
 
 1. 填**本地代理地址**，例如 `http://127.0.0.1:2080`（漏掉 `http://` 会自动补）。
 2. 勾**启用代理分流**，**分流模式**选「白名单」。
-3. 在**走代理的域名**里填域名，一行一个，例如：
+3. 在**走代理的域名**的输入框里输入域名，**回车**（或点「添加」）即存成上方的
+   标签并立刻写入配置 —— 不需要再点保存。每个标签右边有 **✕**，点它就删掉该域名。
+   可以一次粘多个（空格 / 逗号 / 换行分隔），重复的会自动去重。例如：
 
    ```
    api.openai.com
@@ -103,7 +105,7 @@ node "$dsh\node\bin\node.exe" "$dsh\pnpm\bin\pnpm.cjs" install
 
 4. 下方**已发现的域名**是从当前 profile 的 provider 配置里解析出来的，点一下就
    加进上面的列表（省得查文档；点 provider 名一次加全部）。
-5. **保存**。设置即时生效，不需要重启 DSH。
+5. **保存**只需管代理地址 / 开关 / 绕过清单这几项。设置即时生效，不需要重启 DSH。
 6. 点**测试**可以确认代理端口在监听、目标地址可达。
 
 ## 配置项
@@ -159,6 +161,7 @@ plugin fiber 并复用缓存模块，不重新 import。所以改完 `lib/*.js` 
 
 ```bash
 node test/selftest.mjs        # 纯逻辑断言 + 假代理实跑
+node test/client-domains.mjs  # 设置卡片域名输入的校验、去重、多值拆分
 node test/catalog-offline.mjs # 设置桥的 catalog 处理器，含 llm 缺席/抛错的降级
 node test/live-proxy.mjs      # 打真实 NekoBox 的端到端实测
 ```
@@ -189,4 +192,4 @@ node test/live-proxy.mjs      # 打真实 NekoBox 的端到端实测
 - `lib/bridge.js` —— 设置桥的 HTTP 路由（只接受回环来源）
 - `lib/index.js` —— 插件入口：配置 schema、热更新接线、探针
 - `lib/client.js` —— 设置卡片（免构建，直接注入宿主 `ModuleLoader`）
-- `test/` —— 三个自检脚本，见上
+- `test/` —— 四个自检脚本，见上
