@@ -1,6 +1,6 @@
 {
   "name": "dsh-model-proxy",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "在 DSH 设置里按域名指定哪些流量走本地 HTTP 代理（NekoBox 等），未指定的直连。可填代理地址、域名清单与绕过清单。",
   "type": "module",
   "main": "lib/index.js",
