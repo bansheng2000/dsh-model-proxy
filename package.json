@@ -1,6 +1,6 @@
 {
   "name": "dsh-model-proxy",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "在 DSH 设置里按域名指定哪些流量走本地 HTTP 代理（NekoBox 等），未指定的直连。可填代理地址、域名清单与绕过清单。",
   "type": "module",
   "main": "lib/index.js",
@@ -48,7 +48,6 @@
     "@deepseek-ai/dsh-client-ui-plugin-manager": "^0.1.7-rc.1 || ^0.2.0-rc.1",
     "@deepseek-ai/dsh-client-ui-settings": "^0.1.7-rc.1 || ^0.2.0-rc.1",
     "@deepseek-ai/dsh-settings": "^0.1.7-rc.1 || ^0.2.0-rc.1",
-    "@deepseek-ai/schemastery": "^3.18.4",
     "react": "^18.2.0"
   },
   "peerDependenciesMeta": {
@@ -65,9 +64,6 @@
       "optional": true
     },
     "@deepseek-ai/dsh-settings": {
-      "optional": true
-    },
-    "@deepseek-ai/schemastery": {
       "optional": true
     },
     "react": {

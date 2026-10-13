@@ -9,10 +9,24 @@
  * 用假的 settings / llm 喂进去，验证 handlers.catalog() 真的产出 rows。
  */
 
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 // Windows 上绝对路径必须转成 file:// URL，否则 ESM 报 ERR_UNSUPPORTED_ESM_URL_SCHEME。
-const PROFILE_LIB = pathToFileURL("C:/Users/12576/.dsh/profiles/desktop/node_modules/dsh-model-proxy/lib").href;
+// 默认取本机桌面版 profile 里已安装的那份；换 profile 用 DSH_PROFILE / DSH_PROFILE_LIB 覆盖。
+const PROFILE_LIB = pathToFileURL(
+  process.env.DSH_PROFILE_LIB ??
+    join(
+      homedir(),
+      ".dsh",
+      "profiles",
+      process.env.DSH_PROFILE ?? "desktop",
+      "node_modules",
+      "dsh-model-proxy",
+      "lib",
+    ),
+).href;
 const fromProfile = (file) => import(`${PROFILE_LIB}/${file}`);
 
 const { makeBridgeRoutes } = await fromProfile("bridge.js");

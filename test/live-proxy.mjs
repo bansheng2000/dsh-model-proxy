@@ -12,9 +12,23 @@
  * 环境变量：SELFTEST_PROXY_URL（默认 http://127.0.0.1:2080）
  */
 
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-const PROFILE_LIB = pathToFileURL("C:/Users/12576/.dsh/profiles/desktop/node_modules/dsh-model-proxy/lib").href;
+// 默认取本机桌面版 profile 里已安装的那份；换 profile 用 DSH_PROFILE / DSH_PROFILE_LIB 覆盖。
+const PROFILE_LIB = pathToFileURL(
+  process.env.DSH_PROFILE_LIB ??
+    join(
+      homedir(),
+      ".dsh",
+      "profiles",
+      process.env.DSH_PROFILE ?? "desktop",
+      "node_modules",
+      "dsh-model-proxy",
+      "lib",
+    ),
+).href;
 const fromProfile = (file) => import(`${PROFILE_LIB}/${file}`);
 
 const { applyProxyPlan, disposeProxyPlan, planFromConfig } = await fromProfile("dispatcher.js");

@@ -20,23 +20,44 @@ HTTP 混合端口），没填的直连。
 
 ### 从 GitHub 装（推荐）
 
-在 profile 的 `package.json` 里登记依赖与 bundle——两处都要写，只写一处插件
-管理器 UI 列不出来：
+仓库：<https://github.com/bansheng2000/dsh-model-proxy>
+
+**1) 登记**。profile 目录是 `%USERPROFILE%\.dsh\profiles\<profile名>`（桌面版默认
+`desktop`）。改它的 `package.json`——`dsh.profile.bundles` 是**数组**，不登记的话
+插件管理器 UI 列不出来：
 
 ```jsonc
 {
-  "dsh": { "profile": { "bundles": [ /* ... */ "dsh-model-proxy" ] } },
-  "dependencies": { "dsh-model-proxy": "github:bansheng2000/dsh-model-proxy" }
+  "dsh": {
+    "profile": {
+      "bundles": [
+        // 保留已有的，追加一行
+        "dsh-model-proxy"
+      ]
+    }
+  },
+  "dependencies": {
+    // 二选一，都实测可用：
+    "dsh-model-proxy": "https://codeload.github.com/bansheng2000/dsh-model-proxy/tar.gz/refs/tags/v0.2.1"
+    // "dsh-model-proxy": "git+https://github.com/bansheng2000/dsh-model-proxy.git"
+  }
 }
 ```
 
-然后在该 profile 目录里 `pnpm install`，重启 DSH。
+> **别用 `github:bansheng2000/dsh-model-proxy` 这种简写。** pnpm 解析简写时会去
+> `git ls-remote git+ssh://git@github.com/...`，没配 GitHub SSH key 的机器直接
+> 失败（本机实测）。显式写 `git+https://` 或 codeload tarball 地址都不碰 ssh。
 
-### 手动装
+**2) 安装**（github.com 直连不通就先给 pnpm 一个本地代理）：
 
-把 `dsh-model-proxy/` 放进 profile 的 `node_modules/`，同样在 `package.json`
-的 `dependencies` 与 `dsh.profile.bundles` 两处登记，然后在 profile 的
-`cordis.patch.yml` 追加本包自带的 patch：
+```powershell
+cd $env:USERPROFILE\.dsh\profiles\desktop
+$env:HTTPS_PROXY = 'http://127.0.0.1:2080'
+$dsh = "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies"
+node "$dsh\node\bin\node.exe" "$dsh\pnpm\bin\pnpm.cjs" install
+```
+
+**3) 追加 patch**，然后在 profile 的 `cordis.patch.yml` 里加上本包自带的 patch：
 
 ```yaml
 - id: model-proxy
@@ -51,11 +72,13 @@ HTTP 混合端口），没填的直连。
         - localhost
 ```
 
-> profile 的 `cordis.patch.yml` 用**平铺 `- id:`**（拿得到 `patchId`，行配置卡片
-> 才注册得上）；本包自带的 `cordis.patch.yml` 则必须用 `- insert:` 创建 loader 行。
-> 两者形式不同、目的不同，别互换。
+重启 DSH（改的是 `lib/` 才需要重启；只改设置页里的域名不用）。
 
-重启 DSH。
+### 手动装（不联网 / 改代码调试）
+
+把 `dsh-model-proxy/` 整份拷进 profile 的 `node_modules/`，再照上面第 1、3 步登记
+`dependencies`、`dsh.profile.bundles` 和 patch 即可。注意 profile 里是**真实拷贝**
+不是 symlink：改了仓库里的文件必须重新拷贝才会生效。
 
 ## 使用
 
