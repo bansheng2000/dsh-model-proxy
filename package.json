@@ -31,6 +31,10 @@
     "翻墙"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bansheng2000/dsh-model-proxy.git"
+  },
   "engines": {
     "node": ">=20"
   },

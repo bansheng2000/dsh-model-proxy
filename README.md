@@ -18,10 +18,25 @@ HTTP 混合端口），没填的直连。
 
 ## 安装
 
-把 `dsh-model-proxy/` 放进当前 profile 的 `node_modules/`，并在 profile 的
-`package.json` 的 `dependencies` 与 `dsh.profile.bundles` 两处登记（否则插件
-管理器 UI 列不出来），然后在
-`C:\Users\12576\.dsh\profiles\desktop\cordis.patch.yml` 追加本包自带的 patch：
+### 从 GitHub 装（推荐）
+
+在 profile 的 `package.json` 里登记依赖与 bundle——两处都要写，只写一处插件
+管理器 UI 列不出来：
+
+```jsonc
+{
+  "dsh": { "profile": { "bundles": [ /* ... */ "dsh-model-proxy" ] } },
+  "dependencies": { "dsh-model-proxy": "github:bansheng2000/dsh-model-proxy" }
+}
+```
+
+然后在该 profile 目录里 `pnpm install`，重启 DSH。
+
+### 手动装
+
+把 `dsh-model-proxy/` 放进 profile 的 `node_modules/`，同样在 `package.json`
+的 `dependencies` 与 `dsh.profile.bundles` 两处登记，然后在 profile 的
+`cordis.patch.yml` 追加本包自带的 patch：
 
 ```yaml
 - id: model-proxy
