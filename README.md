@@ -47,6 +47,12 @@ HTTP 混合端口），没填的直连。
 > **别用 `github:bansheng2000/dsh-model-proxy` 这种简写。** pnpm 解析简写时会去
 > `git ls-remote git+ssh://git@github.com/...`，没配 GitHub SSH key 的机器直接
 > 失败（本机实测）。显式写 `git+https://` 或 codeload tarball 地址都不碰 ssh。
+> 非要让简写跑通，就把它也重写到 https（注意 `git@github.com:` 形态的
+> `insteadOf` 覆盖不到 `git+ssh://`）：
+>
+> ```powershell
+> git config --global url."https://github.com/".insteadOf "git+ssh://git@github.com/"
+> ```
 
 **2) 安装**（github.com 直连不通就先给 pnpm 一个本地代理）：
 
