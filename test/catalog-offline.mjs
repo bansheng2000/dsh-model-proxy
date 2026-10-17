@@ -71,16 +71,19 @@ const catalogRoute = routes.find((r) => r.path.endsWith("/catalog"));
 if (!catalogRoute) throw new Error("catalog route missing");
 
 // 用一个最小 IncomingMessage 替身触发 handler。
+// H1 之后桥会校验 Host（挡 cloudflared 隧道与 DNS rebinding），替身必须带回环 Host。
+const loopbackReq = (extra = {}) => ({
+  socket: { remoteAddress: "127.0.0.1" },
+  headers: { host: "127.0.0.1:19387" },
+  ...extra,
+});
 const res = {
   statusCode: null,
   body: null,
   writeHead(status) { this.statusCode = status; },
   end(chunk) { this.body = chunk; },
 };
-await catalogRoute.handler(
-  { method: "GET", socket: { remoteAddress: "127.0.0.1" } },
-  res,
-);
+await catalogRoute.handler(loopbackReq({ method: "GET" }), res);
 
 const payload = JSON.parse(res.body);
 console.log("http status      :", res.statusCode);
@@ -127,7 +130,7 @@ async function runCatalog(label, listProvidersImpl) {
     writeHead(s) { this.statusCode = s; },
     end(c) { this.body = c; },
   };
-  await r.handler({ method: "GET", socket: { remoteAddress: "127.0.0.1" } }, sink);
+  await r.handler(loopbackReq({ method: "GET" }), sink);
   const parsed = JSON.parse(sink.body);
   console.log(`\n[${label}] http=${sink.statusCode} ok=${parsed.ok} rows=${parsed.value?.rows?.length ?? "n/a"}`,
     "providers=", JSON.stringify(parsed.value?.rows?.map((x) => x.provider) ?? []));

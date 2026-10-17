@@ -36,7 +36,7 @@
     "url": "git+https://github.com/bansheng2000/dsh-model-proxy.git"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=20.18.1"
   },
   "dependencies": {
     "@deepseek-ai/schemastery": "^3.18.4",
