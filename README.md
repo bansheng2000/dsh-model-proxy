@@ -38,7 +38,7 @@ HTTP 混合端口），没填的直连。
   },
   "dependencies": {
     // 二选一，都实测可用：
-    "dsh-model-proxy": "https://codeload.github.com/bansheng2000/dsh-model-proxy/tar.gz/refs/tags/v0.2.3"
+    "dsh-model-proxy": "https://codeload.github.com/bansheng2000/dsh-model-proxy/tar.gz/refs/tags/v0.2.4"
     // "dsh-model-proxy": "git+https://github.com/bansheng2000/dsh-model-proxy.git"
   }
 }
