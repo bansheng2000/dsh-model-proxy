@@ -38,7 +38,8 @@ export function setHangClose(value) {
   hangClose = value;
 }
 
-class Dispatcher {
+/** dispatcher.js 的 Router 继承它，必须一起替身。 */
+export class Dispatcher {
   constructor(options = {}) {
     if (failures.agent) {
       failures.agent = false;
@@ -65,6 +66,7 @@ class Dispatcher {
 export class Agent extends Dispatcher {}
 export class Pool extends Dispatcher {}
 export class ProxyAgent extends Dispatcher {}
+export class Client extends Dispatcher {}
 
 /** 还没被 close 的 agent 数（泄漏就是它 > 1）。 */
 export function openCount() {

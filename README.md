@@ -127,6 +127,40 @@ node "$dsh\node\bin\node.exe" "$dsh\pnpm\bin\pnpm.cjs" install
 - `api.example.com:443` —— 指定端口；`:*` 或 `:any` 表示任意端口
 - `*` —— 全部主机
 
+## 代理不通时自动直连
+
+命中的域名先走代理；**在响应交付之前**连不上代理时，插件自动把**同一次调用**改成直连重发。
+业务方看不到失败，只是晚一点拿到正常响应。同一次调用最多两次尝试（代理一次、直连一次），
+不会并发重发，也不会在直连之后再回头试代理。
+
+代价要说清：若代理其实已经把请求转发出去、只是没把响应头返回来，直连重发会让上游收到
+两次——和任何 HTTP 重试同一前提。幂等的读请求无所谓，非幂等的写请求请留意这一点。
+
+切换条件（任一成立即切换）：
+
+| 条件 | 阈值 |
+| --- | --- |
+| 连接类错误且尚未收到响应头 | `ECONNREFUSED` `ECONNRESET` `ECONNABORTED` `ENOTFOUND` `EAI_AGAIN` `EHOSTUNREACH` `ENETUNREACH` `ETIMEDOUT` `UND_ERR_CONNECT_TIMEOUT` `UND_ERR_SOCKET` |
+| 连代理本身超时 | 3000 ms |
+| 发出后一直没有响应头 | 5000 ms |
+
+响应头已经到达之后才断的（下载中被掐断）**不切换**——那时已交付一半，重发会重复副作用。
+
+失败一次即进入 down：15 s 内所有请求直接直连，不再撞代理；到期后只放一个请求去试探，
+成功则恢复，失败则冷却翻倍（15 s → 30 s → … → 封顶 300 s）。
+
+```
+model-proxy: failover fallback — 代理不可用，改直连: ECONNREFUSED
+model-proxy: failover recovered — 代理恢复，重新走 127.0.0.1:2080
+```
+
+最近 20 条事件与当前状态在设置桥 `getStatus` 的 `failover` 字段（state / failures /
+retries / lastError / nextCooldownMs），DSH 日志里同时有 `model-proxy: failover` 行。
+
+**已知边界**：明文 `http://` 目标经 HTTP 代理时，`ProxyAgent` 在「连上代理」那一刻就算
+connected（它把请求行改写成绝对 URL 直发），超时看门狗会被提前关掉——这种情况只靠连接
+错误切换。HTTPS 目标走 CONNECT 隧道，判定是准的。
+
 ## 已知限制（都是传输层的物理限制，不是没实现）
 
 **代理按域名生效，不按单个模型生效。** DSH 的 LLM adapter 自己用
@@ -160,10 +194,12 @@ plugin fiber 并复用缓存模块，不重新 import。所以改完 `lib/*.js` 
 ## 自检
 
 ```bash
-node test/selftest.mjs        # 纯逻辑断言 + 假代理实跑
-node test/client-domains.mjs  # 设置卡片域名输入的校验、去重、多值拆分
-node test/catalog-offline.mjs # 设置桥的 catalog 处理器，含 llm 缺席/抛错的降级
-node test/live-proxy.mjs      # 打真实 NekoBox 的端到端实测
+node test/selftest.mjs         # 纯逻辑断言 + 假代理实跑
+node test/client-domains.mjs   # 设置卡片域名输入的校验、去重、多值拆分
+node test/catalog-offline.mjs  # 设置桥的 catalog 处理器，含 llm 缺席/抛错的降级
+node test/failover.mjs         # 死代理（127.0.0.1:1）→ 自动改直连
+node test/failover-timeout.mjs # 不可路由代理（192.0.2.1）→ 连接超时后改直连
+node test/live-proxy.mjs       # 打真实 NekoBox 的端到端实测
 ```
 
 `selftest.mjs` 覆盖 host 匹配、白名单/全量/绕过三种模式、provider→host 映射，以及
@@ -188,8 +224,8 @@ node test/live-proxy.mjs      # 打真实 NekoBox 的端到端实测
 
 - `lib/policy.js` —— 纯函数路由策略：host 模式匹配、域名归一化、代理地址校验
 - `lib/providers.js` —— provider → 出站域名映射（配置声明 + 出厂常量兜底，仅供界面「已发现」列表）
-- `lib/dispatcher.js` —— undici `Agent({factory})` 的安装 / 热更新 / 释放
+- `lib/dispatcher.js` —— undici `Agent({factory})` 的安装 / 热更新 / 释放，以及代理失败降级直连（`Router` + 状态机）
 - `lib/bridge.js` —— 设置桥的 HTTP 路由（只接受回环来源）
 - `lib/index.js` —— 插件入口：配置 schema、热更新接线、探针
 - `lib/client.js` —— 设置卡片（免构建，直接注入宿主 `ModuleLoader`）
-- `test/` —— 四个自检脚本，见上
+- `test/` —— 自检脚本，见上
