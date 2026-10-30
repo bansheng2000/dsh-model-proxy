@@ -317,8 +317,18 @@ await test("M3 写请求必须带 expectedRevision（宿主的乐观锁只在传
   assert.equal(typeof first.body.expectedRevision, "number", "不传 expectedRevision 时两个窗口会静默互相覆盖");
   assert.deepEqual(
     first.body.ops.map((op) => op.path.join(".")),
-    ["rules.enabled", "rules.mode", "rules.proxyUrl", "rules.bypass"],
-    "保存只写这四个字段，别顺手动 selected",
+    [
+      "rules.enabled",
+      "rules.mode",
+      "rules.proxyUrl",
+      "rules.bypass",
+      "rules.subscription",
+      "rules.coreApi",
+      "rules.coreSecret",
+      "rules.coreGroup",
+      "rules.nodesAuto",
+    ],
+    "保存只写表单字段，别顺手动 selected（域名清单只由增删按钮改）",
   );
 
   // 写成功后 revision 必须跟着涨，否则下一次写永远撞自己那个已经作废的 revision

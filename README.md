@@ -107,6 +107,8 @@ node "$dsh\node\bin\node.exe" "$dsh\pnpm\bin\pnpm.cjs" install
    加进上面的列表（省得查文档；点 provider 名一次加全部）。
 5. **保存**只需管代理地址 / 开关 / 绕过清单这几项。设置即时生效，不需要重启 DSH。
 6. 点**测试**可以确认代理端口在监听、目标地址可达。
+7. 想让插件自己管一个 mihomo 内核（省得装 NekoBox/Clash）：勾**由插件托管内核** →
+   **安装内核** → **启动内核**，见「托管内核」一节。
 
 ## 配置项
 
@@ -119,6 +121,16 @@ node "$dsh\node\bin\node.exe" "$dsh\pnpm\bin\pnpm.cjs" install
 | `proxyUrl` | 本地代理地址。仅支持 `http://` / `https://` |
 | `selected` | 要走代理的域名清单，一行一个 host 模式 |
 | `bypass` | 永远直连的域名，**优先于** `selected` |
+| `subscription` | 订阅地址，或者直接粘订阅内容（见「节点订阅与自动切换」）|
+| `coreApi` | 内核的 Clash API 地址，如 `127.0.0.1:9090`（只允许回环）|
+| `coreSecret` | 内核 API 的 secret，没设就留空 |
+| `coreGroup` | 插件读写的策略组名，默认 `DSH` |
+| `nodesAuto` | 代理不通时自动切到可用节点，默认关 |
+| `coreManaged` | 由插件托管 mihomo 内核（自动下载/启动/停止），默认关；打开后忽略 `proxyUrl` 与 `coreApi` |
+| `coreDir` | 内核目录，留空 = `~/.dsh/dsh-model-proxy-core` |
+| `coreVersion` | 指定内核版本（如 `v1.19.33`），留空 = 最新 |
+| `coreApiPort` | 托管内核的 Clash API 端口，默认 `9090` |
+| `coreMixedPort` | 托管内核的代理端口，默认 `2081` |
 
 `selected` / `bypass` 的域名写法：
 
@@ -161,6 +173,102 @@ retries / lastError / nextCooldownMs），DSH 日志里同时有 `model-proxy: f
 connected（它把请求行改写成绝对 URL 直发），超时看门狗会被提前关掉——这种情况只靠连接
 错误切换。HTTPS 目标走 CONNECT 隧道，判定是准的。
 
+## 节点订阅与自动切换
+
+插件在这里只做**控制面**：它不自己跑 VLESS / Hysteria2 —— 这两个是传输协议，undici 的
+`ProxyAgent` 只会说 HTTP 代理。真正跑节点的是本机内核（mihomo / Clash Meta / sing-box
+1.11+），插件通过它的 Clash 兼容 REST API 做三件事：拉订阅导入节点、测延迟、切节点。
+
+前提：内核开了 `external-controller`（例如 `external-controller: 127.0.0.1:9090`）。
+NekoBox / v2rayN 没有这个 API，用不了这一节；换 mihomo 内核或 sing-box 即可。
+
+### 四个动作
+
+| 动作 | 走哪条路 | 说明 |
+| --- | --- | --- |
+| 读取节点 | `GET /nodes` | 读 `coreGroup` 组内成员、当前选中、每个节点最近一次延迟 |
+| 刷新订阅 | `POST /nodes/refresh` | 拉订阅 → 解析 → `PATCH /configs` 推给内核 → 回读 |
+| 测速 | `POST /nodes/test` | 并发 4，单节点 3000 ms 超时，探针 `https://www.gstatic.com/generate_204` |
+| 切换 | `POST /nodes/select` | 落成 `PUT /proxies/<coreGroup>`，内核侧真的换线 |
+
+刷新订阅时，订阅请求走的是**插件自己的分流**：订阅域名填进上面的域名清单就会走代理
+（机场域名一般都得这样，否则拉不到）。
+
+解析支持三种格式，自动判别：
+
+- **Clash / mihomo YAML** —— `proxies:` 段原样透传给内核（字段名就是内核的字段名，
+  内核认识 `tuic` 之类本插件不翻译的协议）。缺 `name`/`type`/`server`/`port` 的条目会被
+  跳过并在界面上报出条数。
+- **sing-box JSON** —— 只取 `outbounds` 里可用的基本字段，跳过 `direct`/`block`/`dns`/
+  `selector`/`urltest`；不认识的类型进「跳过」清单。
+- **分享链接列表 / 整段 base64** —— `vless`（含 TLS / REALITY / WS / gRPC / flow）、
+  `hysteria2`（`hy2://` 也行，含 obfs）、`trojan`、`ss`、`http`、`https`、`socks5`。
+  别的协议（`tuic://`、`ssr://` 等）会在界面上报「无法识别的分享链接」，不会静默丢。
+
+### 代理不通时自动切节点
+
+打开 `nodesAuto` 后，两种信号会触发切换：
+
+| 触发 | 判定 |
+| --- | --- |
+| 降级状态机报 `proxy-failed` | 上一节那套「连接失败 / 3000 ms 连不上 / 5000 ms 没响应头」 |
+| 60 s 巡检 | 当前节点连续 2 次测不出延迟（同一个节点失败一次只记数，不切） |
+
+切换目标的选择顺序：**可用 > 未测 > 失败**，同档取延迟最低；排除当前节点。切完写一行：
+
+```
+model-proxy: node -> B（当前节点 A 不可用）
+```
+
+防止来回抖：30 s 内不重复切；每小时最多切 12 次；没有可用节点就保持现状（继续直连），
+不会把当前节点切成一个同样坏的。这些阈值在 `lib/nodes.js` 的 `POOL_DEFAULTS` 里。
+
+### 已知边界
+
+**`PATCH /configs` 是增量语义，但只在 mihomo ≥ 1.16。** 旧版 Clash 会拿整个配置覆盖，
+你自己的规则和别的组会被冲掉。用之前先 `GET /version` 确认（配置卡片上的「读取节点」
+能连上就说明 API 通了，但版本还得自己看一眼）。
+
+**节点密钥不回传前端。** 界面上只看得到「已配置」，明文只存在内核配置里。
+
+**手动与自动切换共用同一套限流。** 30 s / 每小时 12 次对点列表同样生效，被挡住时提示
+`too-soon` 或 `rate-limited`。
+
+## 托管内核（插件自己跑 mihomo）
+
+上一节要一个能接 Clash API 的内核。NekoBox 没有这个 API，所以如果你不想自己装
+mihomo / sing-box，可以让插件代管：**下载、写配置、拉起、停掉全是插件自己干**，
+出站固定走 `127.0.0.1:<coreMixedPort>`，控制面固定走 `127.0.0.1:<coreApiPort>`。
+
+打开 `coreManaged` 后，卡片下方出现「托管内核」一块：
+
+| 按钮 | 做什么 |
+| --- | --- |
+| 安装内核 | 从 GitHub Releases 下 `mihomo-<os>-<arch>-<版本>.zip`（约 20 MB），解压出 `mihomo.exe` 放进内核目录 |
+| 启动内核 | 用当前节点写一份 `config.yaml`，`mihomo -d <目录> -f <目录>/config.yaml` |
+| 停止内核 | win32 走 `taskkill /pid <pid> /T /F`，其他平台 `SIGTERM` → 5 s 后 `SIGKILL` |
+
+启动命令的细节：
+
+- **下载走插件自己的分流**：命中的域名（`github.com`）本来就走你的代理，所以墙内也能装。
+- 版本发现走 `releases/latest` 的 302 `Location`，**不查 `api.github.com`**——匿名调用会 403。
+- 解压先试 `tar -xf`（Win10+ 自带 bsdtar 能解 zip），失败退 `powershell Expand-Archive`。
+- 配置文件就是 mihomo 原生格式：`mixed-port` / `external-controller 127.0.0.1:<port>` /
+  `dns: fake-ip` / 一个 `select` 组 + `rules: ["MATCH,<coreGroup>"]`。
+  **没有节点时**退成 `proxies: []` + `rules: ["MATCH,DIRECT"]`（空组内核起不来）。
+- 刷新订阅时会先停内核、重写 `config.yaml`、再拉起，所以新节点立刻生效。
+
+### 已知边界
+
+**内核进程跟着插件走。** 插件被停用/DSH 退出时会 `coreStop()`，端口不会留在后台；
+但插件崩溃时内核可能成为孤儿进程，必要时 `taskkill /f /im mihomo.exe`。
+
+**只托管一个内核、一个组。** 想同时跑两个代理出口得自己起第二个内核，把 `coreMixedPort`
+让给插件、第二个内核另用端口。
+
+**Windows 之外没实机验证过。** 下载/解压/启动/停止的路径名和信号都按平台写了分支
+（`taskkill` vs `SIGTERM`），但只在 Windows 上跑过真机测试。
+
 ## 已知限制（都是传输层的物理限制，不是没实现）
 
 **代理按域名生效，不按单个模型生效。** DSH 的 LLM adapter 自己用
@@ -199,8 +307,16 @@ node test/client-domains.mjs   # 设置卡片域名输入的校验、去重、�
 node test/catalog-offline.mjs  # 设置桥的 catalog 处理器，含 llm 缺席/抛错的降级
 node test/failover.mjs         # 死代理（127.0.0.1:1）→ 自动改直连
 node test/failover-timeout.mjs # 不可路由代理（192.0.2.1）→ 连接超时后改直连
+node test/subscription.mjs     # 订阅解析：vless/hysteria2/ss/Clash YAML/sing-box/垃圾输入
+node test/nodes.mjs            # 节点池：排序、切换限流、失败降级、巡检两次才切
+node test/clash-api.mjs        # 内核 API 适配器（本地假内核，覆盖 5 个端点与错误码）
+node test/core.mjs             # 托管内核：资产名/版本发现/配置生成/安装失败路径 + /core 四条路由
 node test/live-proxy.mjs       # 打真实 NekoBox 的端到端实测
 ```
+
+`test/core.mjs` 默认只跑离线断言。加 `DMP_CORE_LIVE=1` 会真的下载 20 MB 内核并启动一次
+（`DMP_CORE_VERSION` 可指定版本），结束时删掉临时目录；墙内需要让下载走代理，例如
+`DMP_CORE_LIVE=1 NODE_USE_ENV_PROXY=1 HTTPS_PROXY=http://127.0.0.1:2080 node test/core.mjs`。
 
 `selftest.mjs` 覆盖 host 匹配、白名单/全量/绕过三种模式、provider→host 映射，以及
 **实跑验证**：起一个假代理和一个绑在局域网地址上的 origin，实测「填写的域名确实
@@ -225,7 +341,11 @@ node test/live-proxy.mjs       # 打真实 NekoBox 的端到端实测
 - `lib/policy.js` —— 纯函数路由策略：host 模式匹配、域名归一化、代理地址校验
 - `lib/providers.js` —— provider → 出站域名映射（配置声明 + 出厂常量兜底，仅供界面「已发现」列表）
 - `lib/dispatcher.js` —— undici `Agent({factory})` 的安装 / 热更新 / 释放，以及代理失败降级直连（`Router` + 状态机）
-- `lib/bridge.js` —— 设置桥的 HTTP 路由（只接受回环来源）
-- `lib/index.js` —— 插件入口：配置 schema、热更新接线、探针
+- `lib/bridge.js` —— 设置桥的 HTTP 路由（只接受回环来源），含 `/nodes` 四个端点与 `/core` 四个端点
+- `lib/subscription.js` —— 订阅解析（Clash YAML / sing-box / 分享链接）与「节点 → 内核配置」转换
+- `lib/core-adapter.js` —— Clash 兼容 REST API 适配器：ping / list / delay / select / apply
+- `lib/nodes.js` —— 节点池：健康度排序、切换限流、巡检、failover
+- `lib/core-manager.js` —— 托管内核：版本发现、下载解压、配置生成、进程起停与状态快照
+- `lib/index.js` —— 插件入口：配置 schema、热更新接线、探针、节点管理段、托管内核段
 - `lib/client.js` —— 设置卡片（免构建，直接注入宿主 `ModuleLoader`）
 - `test/` —— 自检脚本，见上
