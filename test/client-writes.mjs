@@ -320,6 +320,8 @@ await test("M3 写请求必须带 expectedRevision（宿主的乐观锁只在传
     [
       "rules.enabled",
       "rules.mode",
+      "rules.proxySource",
+      "rules.coreManaged",
       "rules.proxyUrl",
       "rules.bypass",
       "rules.subscription",

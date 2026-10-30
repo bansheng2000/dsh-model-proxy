@@ -90,7 +90,9 @@ node "$dsh\node\bin\node.exe" "$dsh\pnpm\bin\pnpm.cjs" install
 
 侧栏 **插件 → 已安装 → dsh-model-proxy → 行配置**：
 
-1. 填**本地代理地址**，例如 `http://127.0.0.1:2080`（漏掉 `http://` 会自动补）。
+1. 先选**代理出口**：**本地代理**（填你自己的代理端口，如 NekoBox 的 2080）或
+   **订阅代理**（插件自己装 mihomo + 拉机场订阅，见「托管内核」）。选中的那块展开，
+   另一块只留标题、内容隐藏。
 2. 勾**启用代理分流**，**分流模式**选「白名单」。
 3. 在**走代理的域名**的输入框里输入域名，**回车**（或点「添加」）即存成上方的
    标签并立刻写入配置 —— 不需要再点保存。每个标签右边有 **✕**，点它就删掉该域名。
@@ -125,6 +127,7 @@ node "$dsh\node\bin\node.exe" "$dsh\pnpm\bin\pnpm.cjs" install
 | `coreApi` | 内核的 Clash API 地址，如 `127.0.0.1:9090`（只允许回环）|
 | `coreSecret` | 内核 API 的 secret，没设就留空 |
 | `coreGroup` | 插件读写的策略组名，默认 `DSH` |
+| `proxySource` | 代理出口二选一：`local`（本地代理地址）/ `subscription`（订阅 + 托管内核）。选 `subscription` 等价于打开 `coreManaged` |
 | `nodesAuto` | 代理不通时自动切到可用节点，默认关 |
 | `coreManaged` | 由插件托管 mihomo 内核（自动下载/启动/停止），默认关；打开后忽略 `proxyUrl` 与 `coreApi` |
 | `coreDir` | 内核目录，留空 = `~/.dsh/dsh-model-proxy-core` |
@@ -240,12 +243,17 @@ model-proxy: node -> B（当前节点 A 不可用）
 mihomo / sing-box，可以让插件代管：**下载、写配置、拉起、停掉全是插件自己干**，
 出站固定走 `127.0.0.1:<coreMixedPort>`，控制面固定走 `127.0.0.1:<coreApiPort>`。
 
-打开 `coreManaged` 后，卡片下方出现「托管内核」一块：
+把**代理出口**选成「订阅代理」就进入这套：卡片里只剩订阅地址、两个端口和三个按钮，
+另一个出口的内容自动隐藏。**点「启用 / 更新订阅」一个按钮走完全程**：
+
+1. 存设置；2. 托管目录里没内核就下载（GitHub Releases 的 `mihomo-<os>-<arch>-<版本>.zip`，
+约 20 MB）+ 解压；3. 拉订阅 → 解析 → 写 `config.yaml`；4. 停掉旧内核、用新配置拉起；
+5. 读回节点清单并**自动测速**，节点按钮上直接显示延迟。
 
 | 按钮 | 做什么 |
 | --- | --- |
-| 安装内核 | 从 GitHub Releases 下 `mihomo-<os>-<arch>-<版本>.zip`（约 20 MB），解压出 `mihomo.exe` 放进内核目录 |
-| 启动内核 | 用当前节点写一份 `config.yaml`，`mihomo -d <目录> -f <目录>/config.yaml` |
+| 启用 / 更新订阅 | 上面那五步一次做完（换订阅、改端口后再点一次即可） |
+| 测速 | 只重测延迟，不动内核 |
 | 停止内核 | win32 走 `taskkill /pid <pid> /T /F`，其他平台 `SIGTERM` → 5 s 后 `SIGKILL` |
 
 启动命令的细节：
@@ -259,6 +267,10 @@ mihomo / sing-box，可以让插件代管：**下载、写配置、拉起、停�
 - 刷新订阅时会先停内核、重写 `config.yaml`、再拉起，所以新节点立刻生效。
 
 ### 已知边界
+
+**重启 DSH 后第一次同步会自己拉一遍订阅。** 节点清单只存在内存里，重启后是空的；
+所以插件在托管模式下若发现池子里没节点、又配了订阅地址，会先拉订阅再起内核——
+否则内核会拿着一份没有节点、没有策略组的配置起来（界面表现为 `group-missing`）。
 
 **内核进程跟着插件走。** 插件被停用/DSH 退出时会 `coreStop()`，端口不会留在后台；
 但插件崩溃时内核可能成为孤儿进程，必要时 `taskkill /f /im mihomo.exe`。
