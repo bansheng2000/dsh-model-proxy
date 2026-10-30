@@ -109,8 +109,8 @@ node "$dsh\node\bin\node.exe" "$dsh\pnpm\bin\pnpm.cjs" install
    加进上面的列表（省得查文档；点 provider 名一次加全部）。
 5. **保存**只需管代理地址 / 开关 / 绕过清单这几项。设置即时生效，不需要重启 DSH。
 6. 点**测试**可以确认代理端口在监听、目标地址可达。
-7. 想让插件自己管一个 mihomo 内核（省得装 NekoBox/Clash）：勾**由插件托管内核** →
-   **安装内核** → **启动内核**，见「托管内核」一节。
+7. 想让插件自己管内核（省得装 NekoBox/Clash）：选「订阅代理」→ 选 **mihomo** 或
+   **sing-box** → 点**启用 / 更新订阅**（缺的内核会一起下好），见「托管内核」一节。
 
 ## 配置项
 
@@ -134,6 +134,7 @@ node "$dsh\node\bin\node.exe" "$dsh\pnpm\bin\pnpm.cjs" install
 | `coreVersion` | 指定内核版本（如 `v1.19.33`），留空 = 最新 |
 | `coreApiPort` | 托管内核的 Clash API 端口，默认 `9090` |
 | `coreMixedPort` | 托管内核的代理端口，默认 `2081` |
+| `coreKind` | 用哪个内核：`mihomo`（默认）/ `singbox`。两个可以同时装着，切换会重启内核 |
 
 `selected` / `bypass` 的域名写法：
 
@@ -237,34 +238,47 @@ model-proxy: node -> B（当前节点 A 不可用）
 **手动与自动切换共用同一套限流。** 30 s / 每小时 12 次对点列表同样生效，被挡住时提示
 `too-soon` 或 `rate-limited`。
 
-## 托管内核（插件自己跑 mihomo）
+## 托管内核（插件自己跑 mihomo 或 sing-box）
 
 上一节要一个能接 Clash API 的内核。NekoBox 没有这个 API，所以如果你不想自己装
 mihomo / sing-box，可以让插件代管：**下载、写配置、拉起、停掉全是插件自己干**，
 出站固定走 `127.0.0.1:<coreMixedPort>`，控制面固定走 `127.0.0.1:<coreApiPort>`。
 
-把**代理出口**选成「订阅代理」就进入这套：卡片里只剩订阅地址、两个端口和三个按钮，
+把**代理出口**选成「订阅代理」就进入这套：卡片里只剩订阅地址、两个端口和四个按钮，
 另一个出口的内容自动隐藏。**点「启用 / 更新订阅」一个按钮走完全程**：
 
-1. 存设置；2. 托管目录里没内核就下载（GitHub Releases 的 `mihomo-<os>-<arch>-<版本>.zip`，
-约 20 MB）+ 解压；3. 拉订阅 → 解析 → 写 `config.yaml`；4. 停掉旧内核、用新配置拉起；
+1. 存设置；2. 缺的内核就下载 + 解压（**mihomo 和 sing-box 都会补齐**，装在同一目录、
+二进制名不同，可以共存）；3. 拉订阅 → 解析 → 按当前内核写配置；4. 停掉旧内核、用新配置拉起；
 5. 读回节点清单并**自动测速**，节点按钮上直接显示延迟。
+
+**用哪个内核由卡片上方的两个按钮选**（`mihomo` / `sing-box`，装好的会显示 ✓）：两者都通过
+Clash 兼容 API 说话（sing-box 用 `experimental.clash_api`），所以节点列表、测速、自动切换对
+内核是哪一种完全无感。**切换会重启内核**（节点重新握手几秒）。
+
+| 内核 | 配置 | 装的是 |
+| --- | --- | --- |
+| mihomo | `config.yaml`（原生） | `MetaCubeX/mihomo` 的 `mihomo-<os>-<arch>-<版本>.zip` |
+| sing-box | `config.json`（由 Clash 条目翻译） | `SagerNet/sing-box` 的 `sing-box-<版本>-<os>-<arch>.zip`（非 Windows 平台是 `.tar.gz`） |
 
 | 按钮 | 做什么 |
 | --- | --- |
 | 启用 / 更新订阅 | 上面那五步一次做完（换订阅、改端口后再点一次即可） |
 | 测速 | 只重测延迟，不动内核 |
 | 停止内核 | win32 走 `taskkill /pid <pid> /T /F`，其他平台 `SIGTERM` → 5 s 后 `SIGKILL` |
+| mihomo / sing-box | 选跑哪个内核（两个可以同时装着）；切换时插件先收掉旧进程再拉新的，端口不会互踩 |
 
 启动命令的细节：
 
 - **下载走插件自己的分流**：命中的域名（`github.com`）本来就走你的代理，所以墙内也能装。
 - 版本发现走 `releases/latest` 的 302 `Location`，**不查 `api.github.com`**——匿名调用会 403。
 - 解压先试 `tar -xf`（Win10+ 自带 bsdtar 能解 zip），失败退 `powershell Expand-Archive`。
-- 配置文件就是 mihomo 原生格式：`mixed-port` / `external-controller 127.0.0.1:<port>` /
+- mihomo 的配置就是它自己的原生格式：`mixed-port` / `external-controller 127.0.0.1:<port>` /
   `dns: fake-ip` / 一个 `select` 组 + `rules: ["MATCH,<coreGroup>"]`。
   **没有节点时**退成 `proxies: []` + `rules: ["MATCH,DIRECT"]`（空组内核起不来）。
-- 刷新订阅时会先停内核、重写 `config.yaml`、再拉起，所以新节点立刻生效。
+- sing-box 的配置是同一批节点**翻译**过去的（`lib/core-manager.js` 的 `buildSingboxConfig`）：
+  `mixed` 入站 + `selector` 组 + `route.final` 指向它，控制面挂 `experimental.clash_api`。
+  翻不了的协议（如 wireguard）会进 `skipped` 并打一行日志，不会让整份配置失效。
+- 刷新订阅时会先停内核、重写配置文件、再拉起，所以新节点立刻生效。
 
 ### 已知边界
 
@@ -275,8 +289,11 @@ mihomo / sing-box，可以让插件代管：**下载、写配置、拉起、停�
 **内核进程跟着插件走。** 插件被停用/DSH 退出时会 `coreStop()`，端口不会留在后台；
 但插件崩溃时内核可能成为孤儿进程，必要时 `taskkill /f /im mihomo.exe`。
 
-**只托管一个内核、一个组。** 想同时跑两个代理出口得自己起第二个内核，把 `coreMixedPort`
-让给插件、第二个内核另用端口。
+**两个内核可以同时装着，但同一时间只跑一个（一个组、一组端口）。** 想同时跑两个代理出口得
+自己起第二个内核，把 `coreMixedPort` 让给插件、第二个内核另用端口。
+
+**sing-box 的节点是翻译过去的。** 订阅里的 Clash 字段（reality / ws / grpc / hysteria2 obfs /
+tuic…）按最常见的写法映射；极其冷门的组合可能翻译不全，切换后看节点列表少没少就知道。
 
 **Windows 之外没实机验证过。** 下载/解压/启动/停止的路径名和信号都按平台写了分支
 （`taskkill` vs `SIGTERM`），但只在 Windows 上跑过真机测试。

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { assetFor, latestTag, buildConfig, binaryName, resolveBinary, corePaths, writeConfig, installCore, createCoreProcess } from "../lib/core-manager.js";
+import { assetFor, latestTag, buildConfig, buildCoreConfig, binaryName, resolveBinary, corePaths, writeConfig, installCore, createCoreProcess } from "../lib/core-manager.js";
 
 // 1) 资产名是确定的：mihomo-<os>-<arch>-<tag>.zip，tag 缺 v 自动补
 {
@@ -49,13 +49,68 @@ import { assetFor, latestTag, buildConfig, binaryName, resolveBinary, corePaths,
   assert.equal(bare.secret, undefined);
 }
 
+// 2b) 双内核：sing-box 的资产名 / 二进制名 / 配置翻译
+{
+  const sb = assetFor("v1.12.0", { platform: "win32", arch: "x64", kind: "singbox" });
+  assert.equal(sb.name, "sing-box-1.12.0-windows-amd64.zip");
+  assert.equal(sb.url, "https://github.com/SagerNet/sing-box/releases/download/v1.12.0/sing-box-1.12.0-windows-amd64.zip");
+  assert.equal(assetFor("v1.12.0", { platform: "linux", arch: "arm64", kind: "singbox" }).name, "sing-box-1.12.0-linux-arm64.tar.gz");
+  assert.equal(binaryName("win32", "singbox"), "sing-box.exe");
+  assert.equal(binaryName("linux", "singbox"), "sing-box");
+  // 两种内核同目录共存，配置文件名不同
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "dmp-core-kinds-"));
+  assert.equal(corePaths(dir, "mihomo").configPath, path.join(dir, "config.yaml"));
+  assert.equal(corePaths(dir, "singbox").configPath, path.join(dir, "config.json"));
+  assert.equal(corePaths(dir, "singbox").binaryPath, path.join(dir, fs.existsSync("/") ? "sing-box.exe" : "sing-box"));
+  fs.rmSync(dir, { recursive: true, force: true });
+
+  const proxies = [
+    { name: "ss1", type: "ss", server: "1.2.3.4", port: 443, cipher: "aes-128-gcm", password: "p" },
+    { name: "hy1", type: "hysteria2", server: "h", port: 443, password: "x", sni: "a.com", obfs: "salamander", "obfs-password": "q", up: 50, down: 200 },
+    { name: "vl1", type: "vless", server: "v", port: 443, uuid: "u", tls: true, servername: "v.com", network: "ws", "ws-opts": { path: "/ws", headers: { Host: "v.com" } } },
+    { name: "vm1", type: "vmess", server: "m", port: 443, uuid: "uu", cipher: "auto", alterId: 0 },
+    { name: "tj1", type: "trojan", server: "t", port: 443, password: "tp", sni: "t.com" },
+    { name: "zz", type: "wireguard", server: "w", port: 51820 },
+  ];
+  const built = buildCoreConfig("singbox", { proxies, group: "DSH", mixedPort: 2081, apiPort: 9090, secret: "s" });
+  const config = built.config;
+  // wireguard 翻不了就进 skipped，其余都进 outbounds
+  assert.deepEqual(built.skipped, ["zz"]);
+  const types = config.outbounds.map((item) => item.type);
+  assert.deepEqual(types, ["selector", "shadowsocks", "hysteria2", "vless", "vmess", "trojan", "direct"]);
+  assert.equal(config.outbounds[0].tag, "DSH");
+  assert.equal(config.outbounds[0].default, "ss1");
+  assert.deepEqual(config.route, { final: "DSH" });
+  assert.equal(config.inbounds[0].listen_port, 2081);
+  assert.equal(config.experimental.clash_api.external_controller, "127.0.0.1:9090");
+  assert.equal(config.experimental.clash_api.secret, "s");
+  // 逐条翻译的关键字段
+  const byTag = Object.fromEntries(config.outbounds.map((item) => [item.tag, item]));
+  assert.equal(byTag.hy1.obfs.type, "salamander");
+  assert.equal(byTag.hy1.up_mbps, 50);
+  assert.equal(byTag.vl1.tls.server_name, "v.com");
+  assert.deepEqual(byTag.vl1.transport, { type: "ws", path: "/ws", headers: { Host: "v.com" } });
+  assert.equal(byTag.vm1.alter_id, 0);
+  assert.equal(byTag.tj1.tls.enabled, true);
+  // JSON 落盘：扩展名说了算
+  const jsonPath = path.join(os.tmpdir(), "dmp-singbox-" + process.pid + ".json");
+  writeConfig(jsonPath, config);
+  const parsed = JSON.parse(fs.readFileSync(jsonPath, "utf8"));
+  assert.equal(parsed.outbounds.length, config.outbounds.length);
+  fs.rmSync(jsonPath, { force: true });
+  // 没节点时也要能起：只有一个 direct，route.final=direct
+  const bare = buildCoreConfig("singbox", { group: "DSH" }).config;
+  assert.deepEqual(bare.outbounds, [{ type: "direct", tag: "direct" }]);
+  assert.deepEqual(bare.route, { final: "direct" });
+}
+
 // 3) 找内核：配置路径优先，托管目录没有就报错（不抛）
 {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "dmp-core-"));
   const missing = resolveBinary({ dir });
   assert.equal(missing.ok, false);
   assert.equal(missing.source, "managed");
-  assert.match(missing.error, /还没有内核/);
+  assert.match(missing.error, /还没有.*内核/);
   const fake = path.join(dir, "fake-mihomo");
   fs.writeFileSync(fake, "");
   assert.equal(resolveBinary({ binPath: fake }).ok, true);

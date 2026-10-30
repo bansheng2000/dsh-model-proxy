@@ -361,6 +361,24 @@ await test("L4 bypass 输入框删空后不会被旧值填回", async () => {
   assert.equal(findBypass().props.value, "", "删空后不能被旧配置填回去，否则 bypass 永远清不掉");
 });
 
-for (const line of failures) console.error(`FAIL ${line}`);
+// M12：内核选择按钮 —— 点 sing-box 只写 coreKind 一个字段，别顺带把别的表单一起存了
+await test("M12 换内核只写 rules.coreKind", async () => {
+  await settle();
+  const localBtn = buttonByText("订阅代理");
+  assert.ok(localBtn, "找不到「订阅代理」按钮");
+  await localBtn.props.onClick();
+  await settle();
+  posts.length = 0;
+  const button = buttonByText("sing-box");
+  assert.ok(button, "订阅块里应有 sing-box 选择按钮");
+  await button.props.onClick();
+  await settle();
+  const post = posts.find((entry) => entry.suffix === "/mutate");
+  assert.ok(post, "换内核应发起 /mutate");
+  assert.deepEqual(post.body.ops.map((op) => op.path.join(".")), ["rules.coreKind"]);
+  assert.equal(post.body.ops[0].value, "singbox");
+});
+
+for (const line of failures) console.error("FAIL " + line);
 console.log(`${passed} passed, ${failures.length} failed`);
 if (failures.length > 0) process.exitCode = 1;
