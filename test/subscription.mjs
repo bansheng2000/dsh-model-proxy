@@ -1,6 +1,6 @@
 // 自检：订阅解析 + 节点 → 内核配置。不联网。
 import assert from "node:assert/strict";
-import { buildCorePatch, fromClashYaml, parseShareLink, parseSubscription, redact, toMihomoProxy, tryBase64Text } from "../lib/subscription.js";
+import { buildCorePatch, fromClashYaml, isInfoEntry, parseShareLink, parseSubscription, redact, toMihomoProxy, tryBase64Text } from "../lib/subscription.js";
 
 let checks = 0;
 const ok = (label, fn) => { fn(); checks += 1; process.stdout.write("PASS " + label + "\n"); };
@@ -131,3 +131,23 @@ ok("tryBase64Text 不误判普通文本", () => {
 });
 
 process.stdout.write("subscription: " + checks + " checks passed\n");
+
+// 机场把「剩余流量：4.85 TB」伪装成 hysteria2 节点混在 proxies 里：连得上但不是节点
+ok("订阅信息条目不进节点列表", () => {
+  const yaml = [
+    "proxies:",
+    "  - {name: 剩余流量：4.85 TB, type: hysteria2, server: 203.10.98.186, port: 443, password: x}",
+    "  - {name: 套餐到期：长期有效, type: hysteria2, server: 203.10.98.186, port: 443, password: x}",
+    "  - {name: 香港01, type: hysteria2, server: 203.10.98.186, port: 443, password: x}",
+  ].join("\n");
+  const result = parseSubscription(yaml);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.nodes.map((n) => n.name), ["香港01"]);
+  assert.ok(result.warnings.some((w) => w.includes("已过滤")), "过滤了就要在 warnings 里说一声");
+  // 只有信息条目时不该当成功
+  const onlyInfo = parseSubscription("proxies:\n  - {name: 剩余流量：1 GB, type: hysteria2, server: a, port: 443, password: x}");
+  assert.equal(onlyInfo.ok, false);
+  assert.equal(onlyInfo.error, "订阅里只有信息条目，没有可用节点");
+  assert.equal(isInfoEntry("官网 www.example.com"), true);
+  assert.equal(isInfoEntry("美国ai解锁-0.1倍率"), false);
+});

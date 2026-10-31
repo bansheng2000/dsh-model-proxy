@@ -1,7 +1,7 @@
 {
   "name": "dsh-model-proxy",
-  "version": "0.2.5",
-  "description": "在 DSH 设置里按域名指定哪些流量走本地 HTTP 代理（NekoBox 等），未指定的直连。可填代理地址、域名清单与绕过清单。",
+  "version": "0.3.0",
+  "description": "在 DSH 里按域名分流：命中的域名走本地 HTTP 代理或订阅代理（可托管 mihomo / sing-box 内核并自动切节点），未命中的直连；代理不通时同一次调用自动改直连。",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -20,7 +20,8 @@
     "README.md",
     "lib/subscription.js",
     "lib/core-adapter.js",
-    "lib/nodes.js"
+    "lib/nodes.js",
+    "lib/core-manager.js"
   ],
   "keywords": [
     "deepseek-harness",
@@ -29,6 +30,10 @@
     "proxy",
     "nekobox",
     "http-proxy",
+    "mihomo",
+    "sing-box",
+    "subscription",
+    "failover",
     "llm",
     "clash",
     "翻墙"

@@ -143,4 +143,26 @@ await eq("setNodes 刷新订阅时保留已有健康度", async () => {
   assert.equal(pool.snapshot().nodes.find((n) => n.name === "A").latencyMs, 42);
 });
 
+// 落盘的健康度能被恢复：重启后界面立刻有延迟/可用状态，不用先测一轮
+ok("restoreRows 恢复延迟与健康度", () => {
+  const { pool } = makePool();
+  pool.restoreRows([
+    { name: "A", latencyMs: 120, ok: true, failures: 0, streak: 0, lastTestAt: 111 },
+    { name: "B", latencyMs: null, ok: false, failures: 3, streak: 2, lastTestAt: 222 },
+  ]);
+  const snap = pool.snapshot();
+  const a = snap.nodes.find((n) => n.name === "A");
+  const b = snap.nodes.find((n) => n.name === "B");
+  assert.equal(a.latencyMs, 120);
+  assert.equal(a.ok, true);
+  assert.equal(a.lastTestAt, 111);
+  assert.equal(b.ok, false);
+  assert.equal(b.failures, 3);
+  assert.equal(b.streak, 2);
+  // 缓存里没见过的名字不许凭空造节点
+  const before = pool.size;
+  pool.restoreRows([{ name: "D", latencyMs: 9 }]);
+  assert.equal(pool.size, before);
+});
+
 process.stdout.write("nodes: " + checks + " checks passed\n");

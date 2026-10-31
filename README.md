@@ -1,20 +1,33 @@
 # dsh-model-proxy
 
-在 DSH 设置里填一批**域名**，这些域名的出站走本地代理（NekoBox / Clash 的
-HTTP 混合端口），没填的直连。
+给 DSH 的出站流量按**域名**分流：命中的走代理，其余直连。代理出口二选一——
+**本地代理**（NekoBox / Clash 的 HTTP 混合端口），或者**订阅代理**（插件自己
+下载并托管 mihomo / sing-box 内核，粘机场订阅就能用）。
 
-面向的场景：你开着本地 HTTP 代理，只有部分站点（比如 `api.openai.com`、
-`openrouter.ai`）需要翻墙，其余（DeepSeek 官方、本地 sidecar 等）应该直连——
-既省得把所有流量都塞进代理，也避免本机服务绕一圈代理再回来。
+面向的场景：你开着本地代理，但只有部分站点（`api.openai.com`、`openrouter.ai`…）
+需要翻墙，其余（DeepSeek 官方、本地 sidecar 等）应该直连——既不用把所有流量都塞进
+代理，也避免本机服务绕一圈代理再回来。
 
 ```
-填写的域名  →  本地代理（http://127.0.0.1:2080）  →  目标 API
-未填写的    →  直连                                →  目标 API
+填写的域名  →  本地代理 / 托管内核（mihomo、sing-box）  →  目标 API
+未填写的    →  直连                                     →  目标 API
 回环地址    →  恒直连（DSH 自己的 web server 和代理自身不能进代理）
 ```
 
-安装后默认**不改变任何现有行为**：`enabled: false` + `mode: off`，必须自己填
-代理地址和域名才会接管出站。
+## 能做什么
+
+| 能力 | 说明 |
+| --- | --- |
+| 按域名分流 | 白名单 / 全量 / 关闭三种模式；`bypass` 优先于白名单；支持 `host`、`.domain`、`*.domain`、`host:port` |
+| 已发现域名 | 从当前 profile 的 provider 配置解析出真实出站域名，点一下加进清单（provider 名点一次加全部） |
+| 代理不通自动直连 | 响应交付前连不上代理，就把**同一次调用**改直连重发，业务方无感；随后冷却并自动试探恢复 |
+| 订阅代理 | 粘订阅地址或整段订阅内容，自动判别 Clash YAML / sing-box JSON / 分享链接，测延迟、切节点 |
+| 自动切节点 | 代理不通、或当前节点连续两次测不出延迟时，自动换到延迟最低的可用节点（带限流防抖） |
+| 托管内核 | 一键下载并启动 mihomo 或 sing-box（两者可共存、切换重启），出站与控制面端口自动分配 |
+| 分项自检 | 卡片里点「测试」逐行给结果：代理端口是否在监听、目标是否可达，各带耗时与可判定的失败原因 |
+
+安装后默认**不改变任何现有行为**：`enabled: false` + `mode: off`，必须自己启用
+并填代理地址与域名才会接管出站。
 
 ## 安装
 
@@ -38,7 +51,7 @@ HTTP 混合端口），没填的直连。
   },
   "dependencies": {
     // 二选一，都实测可用：
-    "dsh-model-proxy": "https://codeload.github.com/bansheng2000/dsh-model-proxy/tar.gz/refs/tags/v0.2.5"
+    "dsh-model-proxy": "https://codeload.github.com/bansheng2000/dsh-model-proxy/tar.gz/refs/tags/v0.3.0"
     // "dsh-model-proxy": "git+https://github.com/bansheng2000/dsh-model-proxy.git"
   }
 }
@@ -331,15 +344,22 @@ plugin fiber 并复用缓存模块，不重新 import。所以改完 `lib/*.js` 
 ## 自检
 
 ```bash
-node test/selftest.mjs         # 纯逻辑断言 + 假代理实跑
+node test/selftest.mjs         # 纯逻辑断言 + 假代理实跑 + 配置字段守卫
 node test/client-domains.mjs   # 设置卡片域名输入的校验、去重、多值拆分
+node test/client-writes.mjs    # 设置卡片：写队列、乐观锁、探针分项渲染（不许出现 undefined/未知）
+node test/bridge-guard.mjs     # 设置桥：回环来源限制、信封层数（只包一层）、写字段白名单
+node test/probe-guard.mjs      # 探针目标裁决（回环/内网/清单外一律拒）+ 失败原因映射
 node test/catalog-offline.mjs  # 设置桥的 catalog 处理器，含 llm 缺席/抛错的降级
+node test/dispatcher-race.mjs  # dispatcher 热更新/卸载的并发竞态
+node test/undici-hook.mjs      # undici 全局 dispatcher 挂载与还原
+node test/undici-stub.mjs      # 无网络环境下 undici 行为的桩测
 node test/failover.mjs         # 死代理（127.0.0.1:1）→ 自动改直连
 node test/failover-timeout.mjs # 不可路由代理（192.0.2.1）→ 连接超时后改直连
-node test/subscription.mjs     # 订阅解析：vless/hysteria2/ss/Clash YAML/sing-box/垃圾输入
-node test/nodes.mjs            # 节点池：排序、切换限流、失败降级、巡检两次才切
+node test/subscription.mjs     # 订阅解析：vless/hysteria2/ss/Clash YAML/sing-box/垃圾输入/信息条目过滤
+node test/nodes.mjs            # 节点池：排序、切换限流、失败降级、巡检两次才切、缓存恢复
 node test/clash-api.mjs        # 内核 API 适配器（本地假内核，覆盖 5 个端点与错误码）
 node test/core.mjs             # 托管内核：资产名/版本发现/配置生成/安装失败路径 + /core 四条路由
+node test/core-race.mjs        # 内核进程：并发 start 复用同一进程、killSync 真杀、野内核先收掉
 node test/live-proxy.mjs       # 打真实 NekoBox 的端到端实测
 ```
 
@@ -375,6 +395,7 @@ node test/live-proxy.mjs       # 打真实 NekoBox 的端到端实测
 - `lib/core-adapter.js` —— Clash 兼容 REST API 适配器：ping / list / delay / select / apply
 - `lib/nodes.js` —— 节点池：健康度排序、切换限流、巡检、failover
 - `lib/core-manager.js` —— 托管内核：版本发现、下载解压、配置生成、进程起停与状态快照
+- `lib/core-manager.js` —— 托管内核进程：下载、解压、配置生成（mihomo / sing-box）、起停、野进程清理
 - `lib/index.js` —— 插件入口：配置 schema、热更新接线、探针、节点管理段、托管内核段
 - `lib/client.js` —— 设置卡片（免构建，直接注入宿主 `ModuleLoader`）
 - `test/` —— 自检脚本，见上

@@ -115,6 +115,8 @@ const CONFIG = {
 const STATUS = { active: true, mode: "allowlist", proxyUrl: "http://127.0.0.1:2080" };
 const failOn = new Set();
 const posts = [];
+/** /probe 的脚本化回包（桥的外层 {ok, value}，和真宿主一致）。 */
+let probeEnvelope = null;
 
 const jsonResponse = (payload) => ({ ok: true, status: 200, json: async () => payload });
 
@@ -125,6 +127,7 @@ globalThis.fetch = async (url, init = {}) => {
     const body = JSON.parse(init.body);
     posts.push({ suffix, body });
     if (failOn.has(suffix)) throw new Error("network down");
+    if (suffix === "/probe" && probeEnvelope !== null) return jsonResponse(probeEnvelope);
     const value = body.ops?.[0]?.value;
     return jsonResponse({
       ok: true,
@@ -285,6 +288,35 @@ await test("M1 test：/probe reject 后「测试」按钮退出「测试中…�
     `探针区应显示失败结论，实际：${JSON.stringify(textNodes().filter((text) => text.includes("测试结果")))}`,
   );
   failOn.clear();
+});
+
+await test("M1 probe：结果分项展示，且不出现 undefined / 未知", async () => {
+  // 复现线上症状：桥把 probe 结果包在 value 里，老客户端不认识这层 → 「HTTP undefined」
+  probeEnvelope = {
+    ok: true,
+    value: {
+      ok: false,
+      host: "api.example.com",
+      elapsedMs: 12,
+      checks: [
+        { id: "proxy-port", label: "代理端口", target: "127.0.0.1:2081", ok: false, elapsedMs: 3, detail: "端口未监听（连接被拒绝 ECONNREFUSED）" },
+        { id: "http", label: "HTTP 连通性", target: "https://api.example.com/", ok: false, elapsedMs: 12, detail: "连接超时（UND_ERR_CONNECT_TIMEOUT）" },
+      ],
+    },
+  };
+  await settle();
+  await buttonByText("测试").props.onClick();
+  await settle();
+  const texts = textNodes();
+  const joined = texts.join(" | ");
+  assert.ok(joined.includes("测试结果") && joined.includes("失败"), `标题行要给出整体结论，实际：${joined}`);
+  assert.ok(joined.includes("代理端口") && joined.includes("端口未监听"), `要单独列出代理端口项及原因，实际：${joined}`);
+  assert.ok(joined.includes("HTTP 连通性") && joined.includes("连接超时"), `要单独列出 HTTP 项及原因，实际：${joined}`);
+  assert.ok(joined.includes("3ms") && joined.includes("12ms"), `每项都要给耗时，实际：${joined}`);
+  for (const text of texts) {
+    assert.ok(!/undefined|null|未知/.test(text), `结果里不许出现占位符，实际：${JSON.stringify(text)}`);
+  }
+  probeEnvelope = null;
 });
 
 // 这条放最后：删 chip 只改本地 state（写失败也不回滚），会把 listed 清空，

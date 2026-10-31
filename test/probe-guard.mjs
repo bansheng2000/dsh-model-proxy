@@ -9,6 +9,7 @@
  */
 import assert from "node:assert/strict";
 
+import { explainNetError } from "../lib/index.js";
 import { isPrivateHost, probeTargetVerdict } from "../lib/policy.js";
 
 const ALLOW = (url, rules) => {
@@ -136,6 +137,27 @@ test("L3 模式多到缓存上限后判定仍然正确（满了整体丢弃重�
   ALLOW("https://host.d599.example.com/", rules);
   REJECT("https://a.nomatch.example.com/", rules, "不在");
 });
+// 测试结果的「失败原因」不允许落到「未知」：每个常见 errno 都要翻成人话
+{
+  const cases = [
+    [{ code: "ECONNREFUSED" }, "端口未监听"],
+    [{ code: "ENOTFOUND" }, "DNS 解析失败"],
+    [{ code: "EAI_AGAIN" }, "DNS 暂时解析失败"],
+    [{ code: "UND_ERR_CONNECT_TIMEOUT" }, "建立连接超时"],
+    [{ code: "ECONNRESET" }, "连接被重置"],
+    [{ name: "AbortError" }, "超时（8000ms 内没有响应）"],
+    [{ code: "ERR_TLS_CERT_ALTNAME_INVALID" }, "TLS 证书校验失败"],
+  ];
+  for (const [error, expect] of cases) {
+    const text = explainNetError(error, { timeoutMs: 8000 });
+    assert.ok(text.includes(expect), `${JSON.stringify(error)} 应翻成含「${expect}」的说明，实际「${text}」`);
+    assert.ok(text !== "" && !/undefined|null|未知/.test(text), `说明里不许出现占位符，实际「${text}」`);
+  }
+  // 认不出 code 的错误也要原样带出来，不能吞成空串
+  const fallback = explainNetError(new Error("something odd happened"));
+  assert.ok(fallback.includes("something odd happened"), `兜底要带原始信息，实际「${fallback}」`);
+  passed += 1;
+}
 
 for (const line of failures) console.error(`FAIL ${line}`);
 console.log(`${passed} passed, ${failures.length} failed`);

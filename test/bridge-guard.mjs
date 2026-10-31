@@ -348,6 +348,25 @@ await test("合法 op 照旧通过（边界值也是边界内：恰好 200 条 /
   assert.equal(calls.mutate, 2);
 });
 
+// /nodes 不能把 {ok,value} 再包一层：界面读的是 value.nodes，多包一层就永远显示"还没有节点"
+await test("GET /nodes 只包一层（value.nodes 直接可读）", async () => {
+  const nodeRoutes = makeBridgeRoutes({
+    settings,
+    ns: NS,
+    getStatus: async () => ({ active: false, mode: "off" }),
+    getConfig: () => ({ enabled: false, mode: "off" }),
+    listProviders: async () => [],
+    nodes: { status: async () => ({ ok: true, value: { nodes: [{ name: "香港01" }], current: "香港01" } }) },
+  });
+  const target = nodeRoutes.find((candidate) => candidate.path === `${BRIDGE_PREFIX}/nodes`);
+  const res = makeRes();
+  await target.handler(makeReq({ method: "GET", headers: { host: "127.0.0.1:19387" } }), res);
+  const parsed = JSON.parse(res.state.body);
+  assert.equal(parsed.ok, true);
+  assert.equal(Array.isArray(parsed.value?.nodes), true, "value.nodes 必须是数组，不能再嵌一层 value");
+  assert.equal(parsed.value.nodes[0].name, "香港01");
+});
+
 for (const line of failures) console.error(`FAIL ${line}`);
 console.log(`${passed} passed, ${failures.length} failed`);
 if (failures.length > 0) process.exitCode = 1;

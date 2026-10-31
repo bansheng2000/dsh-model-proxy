@@ -2,7 +2,15 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { assetFor, latestTag, buildConfig, buildCoreConfig, binaryName, resolveBinary, corePaths, writeConfig, installCore, createCoreProcess } from "../lib/core-manager.js";
+import { assetFor, latestTag, buildConfig, buildCoreConfig, binaryName, resolveBinary, corePaths, writeConfig, installCore, createCoreProcess, strayKillScript } from "../lib/core-manager.js";
+
+// 0) 收野内核的脚本只能落在托管目录里，且要忽略大小写（Windows 路径）
+{
+  const script = strayKillScript("C:\\Users\\x\\.dsh\\dsh-model-proxy-core");
+  assert.ok(script.includes("dsh-model-proxy-core"), "必须按托管目录过滤，不能无差别杀进程");
+  assert.ok(script.includes("OrdinalIgnoreCase"), "Windows 路径大小写不敏感，比较要忽略大小写");
+  assert.ok(strayKillScript("C:/it's").includes("it''s"), "单引号要转义成两个，否则 PowerShell 语法崩");
+}
 
 // 1) 资产名是确定的：mihomo-<os>-<arch>-<tag>.zip，tag 缺 v 自动补
 {

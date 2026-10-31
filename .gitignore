@@ -1,2 +1,6 @@
 # dependencies - installed into the DSH profile as a real copy, not publishable
 node_modules/
+
+# DSH 会话记录（本机运行时产物，不进仓库）
+.dsh-ops/panel/session-*.json
+.dsh-ops/panel/session-*.ndjson
