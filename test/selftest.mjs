@@ -3,6 +3,7 @@
  * 用 DSH 自带 Node 运行，不依赖宿主：node test/selftest.mjs
  */
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import http from "node:http";
 import net from "node:net";
 
@@ -18,8 +19,25 @@ import {
 import { buildCatalog, collectBaseUrls, createHostResolver, hostOf } from "../lib/providers.js";
 import { planFromConfig } from "../lib/dispatcher.js";
 
+const INDEX_SOURCE = fs.readFileSync(new URL("../lib/index.js", import.meta.url), "utf8");
+
 let passed = 0;
 const failures = [];
+test("settings schema 里的字段一个都不能被 rulesOf 漏掉（写进去不生效的经典坑）", () => {
+  const from = INDEX_SOURCE.indexOf("const Rules = z.object({");
+  assert.ok(from > 0, "找不到 Rules schema");
+  const schemaBlock = INDEX_SOURCE.slice(from, INDEX_SOURCE.indexOf("});", from));
+  const schemaFields = [...schemaBlock.matchAll(/^ {2}(\w+):/gm)].map((m) => m[1]);
+  const rulesOfAt = INDEX_SOURCE.indexOf("function rulesOf(resolved) {");
+  assert.ok(rulesOfAt > 0, "找不到 rulesOf");
+  const body = INDEX_SOURCE.slice(rulesOfAt);
+  const returnBlock = body.slice(body.indexOf("return {"), body.indexOf("\n  };"));
+  // 返回对象里既有 `key: ...` 也有简写 `key,`，两种都算
+  const returned = [...returnBlock.matchAll(/^ {4}(\w+)\s*[:,]/gm)].map((m) => m[1]);
+  const missing = schemaFields.filter((field) => !returned.includes(field));
+  assert.deepEqual(missing, [], `rulesOf 漏了字段: ${missing.join(", ")}（配置里存得下，运行时读不到）`);
+});
+
 function test(name, fn) {
   try {
     fn();
