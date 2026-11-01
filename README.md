@@ -51,7 +51,7 @@
   },
   "dependencies": {
     // 二选一，都实测可用：
-    "dsh-model-proxy": "https://codeload.github.com/bansheng2000/dsh-model-proxy/tar.gz/refs/tags/v0.3.1"
+    "dsh-model-proxy": "https://codeload.github.com/bansheng2000/dsh-model-proxy/tar.gz/refs/tags/v0.3.2"
     // "dsh-model-proxy": "git+https://github.com/bansheng2000/dsh-model-proxy.git"
   }
 }
