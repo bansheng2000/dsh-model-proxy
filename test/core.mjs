@@ -2,7 +2,54 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { assetFor, latestTag, buildConfig, buildCoreConfig, binaryName, resolveBinary, corePaths, writeConfig, installCore, createCoreProcess, strayKillScript } from "../lib/core-manager.js";
+import { assetFor, latestTag, buildConfig, buildCoreConfig, binaryName, resolveBinary, corePaths, writeConfig, installCore, createCoreProcess, strayKillScript, archiveEntryEscapes, checkArchiveEntries, runCommand } from "../lib/core-manager.js";
+
+// 0b) 没有 tar 的机器（Windows Server / 精简 PATH）不能因此装不上内核：
+//     tar 缺失 → PowerShell 做等价校验；两样都拿不到才降级，且必须如实标 unverified。
+{
+  const calls = [];
+  const fakeRun = (command) => {
+    calls.push(command);
+    if (command === "tar") return Promise.resolve({ ok: false, error: "spawn tar ENOENT" });
+    return Promise.resolve({ ok: true, out: "mihomo.exe\r\nREADME.md\r\n" });
+  };
+  const viaPs = await checkArchiveEntries("x.zip", { runCommand: fakeRun });
+  assert.equal(viaPs.ok, true, "tar 缺失时也要能通过等价校验，否则内核永远装不上");
+  assert.equal(viaPs.via, "powershell");
+  assert.deepEqual(viaPs.entries, ["mihomo.exe", "README.md"]);
+  assert.deepEqual(calls, ["tar", "powershell"], "先试 tar，失败才换 PowerShell");
+
+  const none = await checkArchiveEntries("x.zip", { runCommand: () => Promise.resolve({ ok: false, error: "ENOENT" }) });
+  assert.equal(none.ok, true, "两样都没有时降级为只做 sha256，不阻断安装");
+  assert.equal(none.unverified, true, "降级必须如实标出来，不能假装查过成员");
+
+  const evilRun = (command) => Promise.resolve(command === "tar"
+    ? { ok: false, error: "ENOENT" }
+    : { ok: true, out: "../evil.exe\n" });
+  const evil = await checkArchiveEntries("x.zip", { runCommand: evilRun });
+  assert.equal(evil.ok, false, "换了工具也得拦越界成员");
+  assert.match(evil.error, /越界/);
+}
+
+// 0c) 外部命令必须有超时：没有它，一个卡住的 tar/PowerShell 能把「安装内核」挂到天荒地老
+{
+  const started = Date.now();
+  const slow = await runCommand(process.execPath, ["-e", "setTimeout(() => {}, 8000)"], { timeoutMs: 400 });
+  const elapsed = Date.now() - started;
+  assert.equal(slow.ok, false, "超时必须判失败");
+  assert.equal(slow.timedOut, true, "要标出「是超时，不是命令自身报错」");
+  assert.ok(elapsed < 3000, `超时后应立即返回，实际用了 ${elapsed}ms`);
+}
+
+// 0a) 解压前的 zip-slip 守卫：越界成员一律拒（压缩包来自网络，不能假设它善良）
+{
+  for (const bad of ["../evil.sh", "..\\evil.exe", "/etc/passwd", "\\windows\\x.dll", "C:\\Windows\\x.dll", "a/../../b"]) {
+    assert.equal(archiveEntryEscapes(bad), true, `越界成员必须拒：${bad}`);
+  }
+  for (const good of ["mihomo.exe", "sing-box-1.11.0-windows-amd64/sing-box.exe", "a/./b.txt", "..hidden"]) {
+    assert.equal(archiveEntryEscapes(good), false, `正常成员不能误伤：${good}`);
+  }
+}
 
 // 0) 收野内核的脚本只能落在托管目录里，且要忽略大小写（Windows 路径）
 {

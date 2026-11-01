@@ -64,9 +64,37 @@ export class Dispatcher {
 }
 
 export class Agent extends Dispatcher {}
-export class Pool extends Dispatcher {}
-export class ProxyAgent extends Dispatcher {}
 export class Client extends Dispatcher {}
+
+/**
+ * dispatch 脚本：按顺序把事件喂给 handler，用来演练「试探请求的各种收场方式」
+ * （见 test/probe-abandon.mjs）。不填脚本的测试不受影响 —— 那两条 dispatch 没人调用。
+ */
+export const script = { proxy: [], direct: [] };
+
+function drive(list, handler) {
+  for (const step of list) {
+    if (step.type === "connect") handler.onConnect?.(() => {}, {});
+    else if (step.type === "headers") handler.onHeaders?.(200, [], () => {}, "");
+    else if (step.type === "error") {
+      const error = Object.assign(new Error("stub: " + step.code), { code: step.code });
+      handler.onError?.(error);
+    }
+  }
+  return true;
+}
+
+export class Pool extends Dispatcher {
+  dispatch(opts, handler) {
+    return drive(script.direct, handler);
+  }
+}
+
+export class ProxyAgent extends Dispatcher {
+  dispatch(opts, handler) {
+    return drive(script.proxy, handler);
+  }
+}
 
 /** 还没被 close 的 agent 数（泄漏就是它 > 1）。 */
 export function openCount() {

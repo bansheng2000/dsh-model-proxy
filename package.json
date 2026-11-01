@@ -1,6 +1,6 @@
 {
   "name": "dsh-model-proxy",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "在 DSH 里按域名分流：命中的域名走本地 HTTP 代理或订阅代理（可托管 mihomo / sing-box 内核并自动切节点），未命中的直连；代理不通时同一次调用自动改直连。",
   "type": "module",
   "main": "lib/index.js",

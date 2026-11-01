@@ -51,7 +51,7 @@
   },
   "dependencies": {
     // 二选一，都实测可用：
-    "dsh-model-proxy": "https://codeload.github.com/bansheng2000/dsh-model-proxy/tar.gz/refs/tags/v0.3.0"
+    "dsh-model-proxy": "https://codeload.github.com/bansheng2000/dsh-model-proxy/tar.gz/refs/tags/v0.3.1"
     // "dsh-model-proxy": "git+https://github.com/bansheng2000/dsh-model-proxy.git"
   }
 }
@@ -177,6 +177,11 @@ node "$dsh\node\bin\node.exe" "$dsh\pnpm\bin\pnpm.cjs" install
 
 失败一次即进入 down：15 s 内所有请求直接直连，不再撞代理；到期后只放一个请求去试探，
 成功则恢复，失败则冷却翻倍（15 s → 30 s → … → 封顶 300 s）。
+
+试探那一发如果没走完（调用方取消、证书错等**非连接类**失败），不算代理坏：只把「在飞」
+名额交还、不动冷却，记一条 `probe-abandoned` 事件，下个请求再试。漏了这一步，降级期唯一
+的试探被打断一次，`probeInFlight` 就会永远为 true —— 代理被钉在直连直到进程重启
+（回归测试 `test/probe-abandon.mjs`）。
 
 ```
 model-proxy: failover fallback — 代理不可用，改直连: ECONNREFUSED
@@ -341,6 +346,49 @@ plugin fiber 并复用缓存模块，不重新 import。所以改完 `lib/*.js` 
 
 **空列表即直连。** 白名单模式下没填任何域名时插件保持直连，不会误伤全部流量。
 
+**明文 `http://` 目标经 HTTP 代理时「建连超时看门狗」失效。** `ProxyAgent` 在连上代理那
+一刻就把 `onConnect` 交出来（它把请求行改写成绝对 URL 直发），所以 12 s 看门狗和
+「未交付才算失败」的判定都提前收工，这种目标只能靠连接错误切换。HTTPS 目标走 CONNECT
+隧道，判定是准的；细节见上面「代理不通时自动直连」的已知边界。
+
+**不订阅同源跳转。** 见「安全说明 · 订阅跳转只拦两种」：跨域名 302 是机场常态，拦了会误伤。
+
+**端口没人监听只在两处出现。** 面板（本地代理模式的提示行）与日志（`failover proxy-failed`
+时补一行「代理端口 … 当前没有程序监听」，60 s 内只喊一次，复用面板同一份 2 s 缓存结论，
+不会给失败风暴再加一次真连）。不开面板、也不翻日志的话，看到的仍是裸 `ECONNREFUSED`。
+
+## 安全说明
+
+**密钥不回显。** 订阅地址里的 token、内核 API 密钥都不会出现在界面或 `describe` 的响应里：
+设置桥只回 `<字段>Set` 布尔（「有没有设过」），界面用口令框提交，没改动就不下发（避免把
+掩码写回配置）。日志与 `status.proxyUrl` 里的代理地址会把 userinfo 打码成 `***`。
+
+**设置桥不是鉴权。** 它只做回环来源 + Host 回环 + Origin 对齐 + JSON 四道检查，挡的是
+浏览器跨站、DNS rebinding 和 cloudflared 隧道；本机任意进程仍能调用（所以上面那条
+「不回密钥」才必要）。要真鉴权得迁到宿主的 `ctx.connection.fetch.register`。
+
+**磁盘上的凭据是明文。** `<内核目录>/nodes.json` 里是节点分享链接（含 uuid / 密码），
+`config.yaml` 里有内核 API 密钥。两者写入时都尝试 `0600`，但 **Windows 会忽略 mode** ——
+想收紧就自己设 ACL：
+
+```powershell
+icacls "$env:USERPROFILE\.dsh\dsh-model-proxy-core" /inheritance:r /grant:r "$($env:USERNAME):(OI)(CI)F"
+```
+
+**内核二进制不做信任假设。** 从 GitHub release 下载后：release 里带 `<资产名>.sha256`
+就比对（不一致直接失败），没有就把 sha256 记进日志与返回值（`shaVerified: false`，
+不假装校验过 —— 装完面板上会单独一行写「未与官方比对」，别把「已安装」读成「验过了」）；
+解压前先列成员，含 `..`、绝对路径、盘符的压缩包一律拒绝（zip-slip）。
+
+列成员用 `tar -tf`（Win10+ 自带 bsdtar）。机器上没有 `tar` 时改用 PowerShell 的
+`ZipFile::OpenRead` 做**等价校验**（不是跳过），只有两样都拿不到才降级为「只做 sha256 +
+日志记一句未校验成员」。`tar` / PowerShell 都带 30 s 超时，卡住就杀进程树（`taskkill /T /F`），
+不会把「安装内核」永久挂住。
+
+**订阅跳转只拦两种。** 拉订阅时第 2 跳起：回环、内网、`https → http` 降级、`Location` 自带
+userinfo 一律拒绝；**不限制同源** —— 大量机场把订阅 302 到另一个域名（甚至 CDN 域名），
+硬卡同源会把正常订阅拦死。所以「跳到陌生域名」是允许的（`redirect: manual`，每跳都复检）。
+
 ## 自检
 
 ```bash
@@ -354,11 +402,13 @@ node test/dispatcher-race.mjs  # dispatcher 热更新/卸载的并发竞态
 node test/undici-hook.mjs      # undici 全局 dispatcher 挂载与还原
 node test/undici-stub.mjs      # 无网络环境下 undici 行为的桩测
 node test/failover.mjs         # 死代理（127.0.0.1:1）→ 自动改直连
+node test/probe-abandon.mjs    # 降级期试探被打断 → 交还 probeInFlight，不永久钉在直连
+node test/port-probe.mjs       # 本地端口存活探测：只探本机/私网、超时算 unknown、短缓存
 node test/failover-timeout.mjs # 不可路由代理（192.0.2.1）→ 连接超时后改直连
-node test/subscription.mjs     # 订阅解析：vless/hysteria2/ss/Clash YAML/sing-box/垃圾输入/信息条目过滤
+node test/subscription.mjs     # 订阅解析 + 拉订阅：限量中断、回环/内网/降级/userinfo 跳转复检
 node test/nodes.mjs            # 节点池：排序、切换限流、失败降级、巡检两次才切、缓存恢复
 node test/clash-api.mjs        # 内核 API 适配器（本地假内核，覆盖 5 个端点与错误码）
-node test/core.mjs             # 托管内核：资产名/版本发现/配置生成/安装失败路径 + /core 四条路由
+node test/core.mjs             # 托管内核：资产名/版本发现/配置生成/安装失败路径 + /core 四条路由 + tar 缺失时 PowerShell 列成员 + 命令超时杀进程
 node test/core-race.mjs        # 内核进程：并发 start 复用同一进程、killSync 真杀、野内核先收掉
 node test/live-proxy.mjs       # 打真实 NekoBox 的端到端实测
 ```

@@ -1,6 +1,6 @@
 // 自检：订阅解析 + 节点 → 内核配置。不联网。
 import assert from "node:assert/strict";
-import { buildCorePatch, fromClashYaml, isInfoEntry, parseShareLink, parseSubscription, redact, toMihomoProxy, tryBase64Text } from "../lib/subscription.js";
+import { buildCorePatch, fetchSubscription, fromClashYaml, isInfoEntry, parseShareLink, parseSubscription, redact, toMihomoProxy, tryBase64Text } from "../lib/subscription.js";
 
 let checks = 0;
 const ok = (label, fn) => { fn(); checks += 1; process.stdout.write("PASS " + label + "\n"); };
@@ -151,3 +151,84 @@ ok("订阅信息条目不进节点列表", () => {
   assert.equal(isInfoEntry("官网 www.example.com"), true);
   assert.equal(isInfoEntry("美国ai解锁-0.1倍率"), false);
 });
+
+// ── 拉订阅：流式限量 + 重定向复检 ──────────────────────────────────────────
+// 两条都是安全路径：不设上限就是「一个超大响应把内存吃光」；不查重定向目标
+// 就是「机场 302 到 127.0.0.1，插件替它去打本机服务」。
+const realFetch = globalThis.fetch;
+const withFetch = async (impl, run) => {
+  globalThis.fetch = impl;
+  try {
+    return await run();
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+};
+
+const fetched = await withFetch(
+  async () => new Response("proxies: []\n", { status: 200 }),
+  () => fetchSubscription("https://sub.example.test/a"),
+);
+assert.equal(fetched.ok, true);
+assert.equal(fetched.status, 200);
+checks += 1;
+process.stdout.write("PASS 拉订阅：正常 200 原样返回\n");
+
+const redirected = await withFetch(
+  async () => new Response(null, { status: 302, headers: { location: "http://127.0.0.1:6334/api/secret" } }),
+  () => fetchSubscription("https://sub.example.test/a"),
+);
+assert.equal(redirected.ok, false);
+assert.ok(redirected.error.includes("回环"), `重定向到本机必须拒绝，实际：${redirected.error}`);
+checks += 1;
+process.stdout.write("PASS 拉订阅：重定向到回环地址被拒\n");
+
+const privateHop = await withFetch(
+  async () => new Response(null, { status: 301, headers: { location: "http://192.168.1.1/x" } }),
+  () => fetchSubscription("https://sub.example.test/a"),
+);
+assert.equal(privateHop.ok, false);
+assert.ok(privateHop.error.includes("内网"), `重定向到内网必须拒绝，实际：${privateHop.error}`);
+checks += 1;
+process.stdout.write("PASS 拉订阅：重定向到内网地址被拒\n");
+
+// https → http 降级：跳过去就是把订阅 token 放明文线路上
+const downgraded = await withFetch(
+  async () => new Response(null, { status: 302, headers: { location: "http://mirror.example.test/x" } }),
+  () => fetchSubscription("https://sub.example.test/a"),
+);
+assert.equal(downgraded.ok, false);
+assert.ok(downgraded.error.includes("降级"), `https→http 降级必须拒绝，实际：${downgraded.error}`);
+checks += 1;
+process.stdout.write("PASS 拉订阅：https→http 降级跳转被拒\n");
+
+// Location 里自带 userinfo：跟过去等于替对方把凭据发出去
+const userinfoHop = await withFetch(
+  async () => new Response(null, { status: 302, headers: { location: "https://u:p@mirror.example.test/x" } }),
+  () => fetchSubscription("https://sub.example.test/a"),
+);
+assert.equal(userinfoHop.ok, false);
+assert.ok(userinfoHop.error.includes("凭据"), `带 userinfo 的跳转必须拒绝，实际：${userinfoHop.error}`);
+assert.ok(!userinfoHop.error.includes("u:p@"), "拒绝理由里不许回显那对凭据");
+checks += 1;
+process.stdout.write("PASS 拉订阅：Location 带 userinfo 的跳转被拒\n");
+
+const huge = await withFetch(
+  async () =>
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          for (let i = 0; i < 4; i += 1) controller.enqueue(new Uint8Array(8));
+          controller.close();
+        },
+      }),
+      { status: 200 },
+    ),
+  () => fetchSubscription("https://sub.example.test/a", { maxBytes: 10 }),
+);
+assert.equal(huge.ok, false);
+assert.ok(huge.error.includes("过大"), `超限必须中断并报错，实际：${huge.error}`);
+checks += 1;
+process.stdout.write("PASS 拉订阅：超限按字节中断，不先收完再判\n");
+
+console.log(`subscription: ${checks} checks passed`);

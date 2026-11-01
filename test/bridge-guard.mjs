@@ -204,6 +204,87 @@ await test("GET 路由要求对应方法（跨站 GET describe 也被 Origin 拦
   assert.equal(res.state.status, 403);
 });
 
+// describe 不许把密钥原文回给界面：只报「有没有值」（与 descriptor 的 redactSecrets 同口径）。
+// 桥没有鉴权，本机任意进程都能读 /describe —— 回原文等于把文件权限保护的东西降级成 HTTP。
+await test("describe 不回报订阅 token / 内核密钥原文", async () => {
+  const secretRoutes = makeBridgeRoutes({
+    settings: {
+      // descriptor 是第二扇门：config 脱敏了，descriptor.value.rules 还带着原文
+      // （2026-11-01 实测：本机 curl /describe 拿到 descriptor.value.rules.subscription 长度 96）。
+      // 故意让 base 缺席 —— 脱敏不许因为少一层就抛错。
+      describe: () => [
+        {
+          ns: NS,
+          revision: 3,
+          value: {
+            rules: {
+              subscription: "https://sub.example.test/api?token=SUB-TOKEN-ABC",
+              coreSecret: "CORE-KEY-XYZ",
+              coreApi: "http://127.0.0.1:9090/?secret=CORE-KEY-XYZ",
+              proxyUrl: "http://user:pw@127.0.0.1:2080",
+            },
+          },
+          user: { rules: { subscription: "https://sub.example.test/api?token=SUB-TOKEN-ABC" } },
+        },
+      ],
+      mutate: async () => {},
+    },
+    ns: NS,
+    getStatus: async () => ({ active: true, mode: "allowlist" }),
+    getConfig: () => ({
+      enabled: true,
+      mode: "allowlist",
+      subscription: "https://sub.example.test/api?token=SUB-TOKEN-ABC",
+      coreSecret: "CORE-KEY-XYZ",
+      coreApi: "http://127.0.0.1:9090/?secret=CORE-KEY-XYZ",
+      proxyUrl: "http://user:pw@127.0.0.1:2080",
+    }),
+    listProviders: async () => [],
+  });
+  const route = secretRoutes.find((candidate) => candidate.path === `${BRIDGE_PREFIX}/describe`);
+  assert.ok(route, "缺少 /describe 路由");
+  const res = makeRes();
+  await route.handler(makeReq({ method: "GET", headers: { host: "127.0.0.1:19387" } }), res);
+  assert.equal(res.state.status, 200);
+  const body = JSON.parse(res.state.body);
+  assert.equal(body.ok, true);
+  assert.equal(body.value.config.subscription, "", "订阅原文不许回给界面");
+  assert.equal(body.value.config.coreSecret, "", "内核密钥原文不许回给界面");
+  assert.equal(body.value.config.subscriptionSet, true, "要告诉界面「已经设过」，否则用户以为丢了");
+  assert.equal(body.value.config.coreSecretSet, true);
+  assert.ok(!res.state.body.includes("SUB-TOKEN-ABC"), "整个响应里都不许出现订阅 token");
+  assert.ok(!res.state.body.includes("CORE-KEY-XYZ"), "整个响应里都不许出现内核密钥");
+  // descriptor 三层同口径（P0：config 脱敏、descriptor 裸奔）
+  assert.equal(body.value.descriptor.value.rules.subscription, "", "descriptor.value 里的订阅原文也要清空");
+  assert.equal(body.value.descriptor.user.rules.subscription, "", "descriptor.user 里的订阅原文也要清空");
+  assert.equal(body.value.descriptor.value.rules.coreSecret, "", "descriptor.value 里的内核密钥也要清空");
+  assert.equal(body.value.descriptor.base, undefined, "没有 base 层时照常返回，不许抛错");
+  // proxyUrl 是正常配置：只掩 userinfo，host:port 必须留着，否则界面显示成空、用户没法核对
+  assert.equal(body.value.descriptor.value.rules.proxyUrl, "http://***@127.0.0.1:2080");
+  assert.equal(body.value.config.proxyUrl, "http://***@127.0.0.1:2080");
+  assert.equal(body.value.config.proxyUrl.includes("pw"), false, "代理密码不许回显");
+});
+
+// validate-proxy 也会把归一化后的地址回给界面：userinfo 是凭据，同样只留 host:port
+await test("validate-proxy 不回显代理凭据", async () => {
+  const route = routes.find((candidate) => candidate.path === `${BRIDGE_PREFIX}/validate-proxy`);
+  assert.ok(route, "缺少 /validate-proxy 路由");
+  const res = makeRes();
+  await route.handler(
+    makeReq({
+      method: "POST",
+      headers: { host: "127.0.0.1:19387", "content-type": "application/json" },
+      body: JSON.stringify({ proxyUrl: "http://u:p@127.0.0.1:2080" }),
+    }),
+    res,
+  );
+  assert.equal(res.state.status, 200);
+  const body = JSON.parse(res.state.body);
+  assert.equal(body.ok, true);
+  assert.equal(body.value.proxyUrl, "http://***@127.0.0.1:2080", "代理密码不许回显");
+  assert.equal(res.state.body.includes(":p@"), false, "整个响应里不许出现 userinfo 原文");
+});
+
 // ── 3. 纯函数边界 ─────────────────────────────────────────────────────────
 await test("isJsonRequest 只认 application/json 系", async () => {
   assert.equal(isJsonRequest({ headers: { "content-type": "application/json" } }), true);

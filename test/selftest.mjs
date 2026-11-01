@@ -38,6 +38,36 @@ test("settings schema 里的字段一个都不能被 rulesOf 漏掉（写进去�
   assert.deepEqual(missing, [], `rulesOf 漏了字段: ${missing.join(", ")}（配置里存得下，运行时读不到）`);
 });
 
+test("端口提示接线：只在本地模式探端口、订阅模式先短路、走缓存、地址过 redact", () => {
+  const from = INDEX_SOURCE.indexOf("getStatus: async () => {");
+  assert.ok(from > 0, "找不到 getStatus");
+  const block = INDEX_SOURCE.slice(from, INDEX_SOURCE.indexOf("getConfig:", from));
+  const probeAt = block.indexOf("checkProxyPort(rules.proxyUrl");
+  assert.ok(probeAt > 0, "getStatus 没走 checkProxyPort（提示不会出现，或者绕过了 2s 缓存）");
+  assert.ok(
+    !block.includes("await probePort("),
+    "不许直接调 probePort：那会绕过缓存，端口被静默丢包时每次轮询都付满 300ms",
+  );
+  const shortAt = block.indexOf("coreManaged === true");
+  assert.ok(
+    shortAt >= 0 && shortAt < probeAt,
+    "coreManaged 必须在探测之前短路：订阅模式的真实出口是内核端口，拿 proxyUrl 报警是误报",
+  );
+  assert.ok(block.includes("proxyPortUrl: redact("), "提示里的地址必须过 redact（userinfo 不能漏到界面/日志）");
+});
+
+test("失败日志的端口提示：复用缓存、带端口号、过 redact、有去重", () => {
+  const at = INDEX_SOURCE.indexOf("warnIfProxyPortDead = () => {");
+  assert.ok(at > 0, "找不到 warnIfProxyPortDead：failover 日志里不会提示「端口没人监听」");
+  const block = INDEX_SOURCE.slice(at, at + 900);
+  assert.ok(block.includes("checkProxyPort(coreProxyUrl()"), "必须探真实出口（托管时是内核 mixed 端口），且走 checkProxyPort 缓存");
+  assert.ok(!block.includes("probePort("), "不许直接调 probePort：每次失败都真连一次本地端口");
+  assert.ok(block.includes("60000"), "必须按时间窗去重：失败风暴会刷满日志");
+  assert.ok(block.includes("redact(coreProxyUrl()"), "日志里的地址必须过 redact");
+  const failoverAt = INDEX_SOURCE.indexOf('event.type === "proxy-failed") warnIfProxyPortDead()');
+  assert.ok(failoverAt > 0, "onFailover 里没接上端口提示");
+});
+
 function test(name, fn) {
   try {
     fn();

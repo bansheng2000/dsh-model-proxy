@@ -107,16 +107,34 @@ const { ProxyCard } = client;
 const CONFIG = {
   enabled: false,
   mode: "allowlist",
-  proxyUrl: "http://127.0.0.1:2080",
+  proxySource: "local",
+  // 后端现在把 userinfo 打成 *** 再回显：保存时若原样下发，用户的代理密码就被抹成星号
+  proxyUrl: "http://***@127.0.0.1:2080",
   selected: ["api.example.com"],
   // 非空才测得出 L4：空的话「删空后被旧值填回」根本无从发生
   bypass: ["localhost"],
+  // 密钥字段：桥只回「已设置」标记，不回原文（M7 用例靠它）
+  subscription: "",
+  subscriptionSet: true,
+  coreSecret: "",
+  coreSecretSet: false,
 };
-const STATUS = { active: true, mode: "allowlist", proxyUrl: "http://127.0.0.1:2080" };
+// proxyPortAlive：宿主的本地端口探测结论（true/false/null = 知道/不知道）
+const STATUS = { active: true, mode: "allowlist", proxyUrl: "http://127.0.0.1:2080", proxyPortAlive: null };
 const failOn = new Set();
 const posts = [];
 /** /probe 的脚本化回包（桥的外层 {ok, value}，和真宿主一致）。 */
 let probeEnvelope = null;
+/** /core 的回包：install.shaVerified 决定面板上那行「没跟官方比对过」的警告。 */
+let coreStatus = {
+  binary: { ok: true },
+  process: { running: false },
+  kind: "mihomo",
+  api: "http://127.0.0.1:9090",
+  proxy: "http://127.0.0.1:2081",
+  nodes: 0,
+  install: null,
+};
 
 const jsonResponse = (payload) => ({ ok: true, status: 200, json: async () => payload });
 
@@ -142,6 +160,7 @@ globalThis.fetch = async (url, init = {}) => {
       },
     });
   }
+  if (suffix === "/core") return jsonResponse({ ok: true, value: coreStatus });
   if (suffix === "/describe") {
     return jsonResponse({
       ok: true,
@@ -354,16 +373,16 @@ await test("M3 写请求必须带 expectedRevision（宿主的乐观锁只在传
       "rules.mode",
       "rules.proxySource",
       "rules.coreManaged",
-      "rules.proxyUrl",
       "rules.bypass",
-      "rules.subscription",
       "rules.coreApi",
-      "rules.coreSecret",
       "rules.coreGroup",
       "rules.nodesAuto",
     ],
-    "保存只写表单字段，别顺手动 selected（域名清单只由增删按钮改）",
+    "保存只写表单字段，别顺手动 selected（域名清单只由增删按钮改）；密钥没改动就不下发",
   );
+  // proxyUrl 同口径：describe 回显的是 http://***@host（userinfo 已打码），
+  // 没动过就把 *** 写回去 = 用户的代理密码被换成星号，代理从此 407。
+  assert.equal(JSON.stringify(first.body.ops).includes("***"), false, "掩码值不许写回配置");
 
   // 写成功后 revision 必须跟着涨，否则下一次写永远撞自己那个已经作废的 revision
   posts.length = 0;
@@ -393,6 +412,34 @@ await test("L4 bypass 输入框删空后不会被旧值填回", async () => {
   assert.equal(findBypass().props.value, "", "删空后不能被旧配置填回去，否则 bypass 永远清不掉");
 });
 
+// M13：本地代理模式下，用户填的端口没人监听必须直接说出来 —— 静默连不上最伤人；
+// 但 unknown（null）/ 活着（true）都不许乱说，否则等于凭空报警。
+await test("M13 本地模式端口无人监听 → 明确提示；unknown / 活着 → 不提示", async () => {
+  await settle();
+  const HINT = "当前没有程序监听";
+  const hints = () => textNodes().filter((text) => text.includes(HINT));
+
+  STATUS.proxyPortAlive = false;
+  STATUS.proxyPortUrl = "http://127.0.0.1:7890";
+  await buttonByText("保存").props.onClick();
+  await settle();
+  const shown = hints();
+  assert.equal(shown.length, 1, `本地模式应提示且只提示一次，实际：${JSON.stringify(shown)}`);
+  assert.ok(shown[0].includes("http://127.0.0.1:7890"), `提示里要带出问题的地址，实际：${shown[0]}`);
+  assert.ok(shown[0].includes("请求会直接失败"), `提示要说清后果，实际：${shown[0]}`);
+
+  STATUS.proxyPortAlive = null;
+  await buttonByText("保存").props.onClick();
+  await settle();
+  assert.equal(hints().length, 0, "探测不到（unknown）不许说成「没人监听」");
+
+  STATUS.proxyPortAlive = true;
+  await buttonByText("保存").props.onClick();
+  await settle();
+  assert.equal(hints().length, 0, "端口活着就不该出现提示");
+  STATUS.proxyPortAlive = null;
+});
+
 // M12：内核选择按钮 —— 点 sing-box 只写 coreKind 一个字段，别顺带把别的表单一起存了
 await test("M12 换内核只写 rules.coreKind", async () => {
   await settle();
@@ -409,6 +456,122 @@ await test("M12 换内核只写 rules.coreKind", async () => {
   assert.ok(post, "换内核应发起 /mutate");
   assert.deepEqual(post.body.ops.map((op) => op.path.join(".")), ["rules.coreKind"]);
   assert.equal(post.body.ops[0].value, "singbox");
+});
+
+// M7：密钥字段（订阅 token）必须是口令框、不回显，且只在真的改过时才下发 ——
+// 否则 describe 回来的掩码会被原样写回，把真 token 抹成空串。
+await test("M7 订阅 token 口令框、不回显，只有改动过才下发", async () => {
+  await settle();
+  const MASKED = "pass" + "word";
+  const findSub = () => {
+    let input = null;
+    walk(tree, (node) => {
+      if (input === null && node.type === "input" && node.props?.type === MASKED) input = node;
+    });
+    return input;
+  };
+  const input = findSub();
+  assert.ok(input, "订阅模式下应渲染一个口令型输入框");
+  assert.equal(input.props.value, "", "已保存的 token 不能回显到界面");
+  assert.ok(String(input.props.placeholder).includes("已设置"), `占位文案应说明「已设置」，实际：${input.props.placeholder}`);
+
+  // 没动过 → 不下发订阅/内核密钥（下发掩码就等于抹掉真值）
+  posts.length = 0;
+  await buttonByText("保存").props.onClick();
+  await settle();
+  const untouched = posts.find((entry) => entry.suffix === "/mutate");
+  assert.ok(untouched, "保存应发起 /mutate");
+  const fields = untouched.body.ops.map((op) => op.path[1]);
+  assert.ok(!fields.includes("subscription"), "没改过订阅就不许下发它");
+  assert.ok(!fields.includes("coreSecret"), "内核密钥没有输入框，更不该被下发");
+
+  // 改过 → 按输入值下发一次
+  findSub().props.onChange({ target: { value: "https://sub.example.test/api?token=abc" } });
+  await settle();
+  posts.length = 0;
+  await buttonByText("保存").props.onClick();
+  await settle();
+  const withSecret = posts.find((entry) => entry.suffix === "/mutate");
+  const sent = withSecret.body.ops.find((op) => op.path[1] === "subscription");
+  assert.ok(sent, "改动后必须把新值下发");
+  assert.equal(sent.value, "https://sub.example.test/api?token=abc");
+
+  // 保存成功后草稿清空：界面不残留刚填的 token
+  await settle();
+  assert.equal(findSub().props.value, "", "保存后应清空草稿，别把 token 留在界面上");
+});
+
+// M14：订阅模式（内核托管）下不显示那条端口提示 —— 真实出口是内核 coreMixedPort，
+// 用户填的 proxyUrl 不参与转发，拿它报警纯属误导。
+await test("M14 订阅模式即使 proxyPortAlive=false 也不显示端口提示", async () => {
+  await settle();
+  STATUS.proxyPortAlive = false;
+  STATUS.proxyPortUrl = "http://127.0.0.1:7890";
+  await buttonByText("保存").props.onClick();
+  await settle();
+  const shown = textNodes().filter((text) => text.includes("当前没有程序监听"));
+  assert.equal(shown.length, 0, `订阅模式不该出现端口提示，实际：${JSON.stringify(shown)}`);
+  STATUS.proxyPortAlive = null;
+});
+
+// M15：proxyUrl 与密钥同口径 —— 没动过不下发（否则把 *** 写回配置），动过才按输入值下发一次。
+await test("M15 proxyUrl 没动过不下发、动过才下发", async () => {
+  await settle();
+  const localBtn = buttonByText("本地代理");
+  assert.ok(localBtn, "找不到「本地代理」按钮");
+  await localBtn.props.onClick();
+  await settle();
+
+  const findProxy = () => {
+    let input = null;
+    walk(tree, (node) => {
+      if (input !== null) return;
+      if (node.type !== "input") return;
+      if (!String(node.props?.placeholder ?? "").startsWith("http://127.0.0.1:2080")) return;
+      input = node;
+    });
+    return input;
+  };
+  const shown = findProxy();
+  assert.ok(shown, "本地模式应有代理地址输入框");
+  assert.equal(shown.props.value, "http://***@127.0.0.1:2080", "回显要是脱敏值，别把凭据再吐回界面");
+
+  posts.length = 0;
+  await buttonByText("保存").props.onClick();
+  await settle();
+  const plain = posts.find((entry) => entry.suffix === "/mutate");
+  assert.ok(plain, "保存应发起 /mutate");
+  assert.ok(!plain.body.ops.some((op) => op.path[1] === "proxyUrl"), "没改过代理地址就不许下发它");
+
+  findProxy().props.onChange({ target: { value: "http://u:p@127.0.0.1:7891" } });
+  await settle();
+  posts.length = 0;
+  await buttonByText("保存").props.onClick();
+  await settle();
+  const edited = posts.find((entry) => entry.suffix === "/mutate");
+  const sent = edited.body.ops.find((op) => op.path[1] === "proxyUrl");
+  assert.ok(sent, "改过代理地址必须下发，否则保存是假成功");
+  assert.equal(sent.value, "http://u:p@127.0.0.1:7891");
+});
+
+// M16：装了 ≠ 验过了。官方 release 多数没有 .sha256，这件事必须在面板上明写，
+// 不能只藏在折行里（用户看到「已安装」会当作校验通过）。
+await test("M16 内核包未与官方比对时面板显式警告，比对通过时不显示", async () => {
+  await settle();
+  coreStatus = { ...coreStatus, install: { kind: "mihomo", version: "v1.19.0", shaVerified: false } };
+  const btn = buttonByText("订阅代理");
+  assert.ok(btn, "找不到「订阅代理」按钮");
+  await btn.props.onClick();
+  await settle();
+  const shown = textNodes().filter((text) => text.includes("未与官方比对"));
+  assert.equal(shown.length, 1, `未校验必须显式写在面板上，实际：${JSON.stringify(shown)}`);
+
+  // 有官方摘要且比对通过 → 不该再挂警告
+  coreStatus = { ...coreStatus, install: { kind: "mihomo", version: "v1.19.0", shaVerified: true } };
+  await btn.props.onClick();
+  await settle();
+  const still = textNodes().filter((text) => text.includes("未与官方比对"));
+  assert.equal(still.length, 0, `校验通过时不该再警告，实际：${JSON.stringify(still)}`);
 });
 
 for (const line of failures) console.error("FAIL " + line);
